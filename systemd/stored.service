@@ -1,0 +1,26 @@
+# systemd unit template for the stored chronicler daemon.
+# Production supervisor is systemd; health is systemd + Zenoh liveliness — no
+# HTTP health port. Install as a uv-built venv; adjust paths/User for the host.
+#
+# Note: Type=notify expects sd_notify(READY=1), which the daemon sends once the
+# session is open and streams are subscribed (lands in M4). Until then, switch
+# to Type=simple for local testing.
+
+[Unit]
+Description=stored — seared/zeared mesh chronicler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/opt/stored/.venv/bin/python -m stored run --config /etc/stored/stored.toml
+Restart=on-failure
+RestartSec=2
+# WatchdogSec=30            # requires periodic sd_notify(WATCHDOG=1) (M4)
+Environment=STORED_LOG_LEVEL=INFO
+# Harden as appropriate for the deployment host:
+# DynamicUser=yes
+# StateDirectory=stored
+
+[Install]
+WantedBy=multi-user.target
