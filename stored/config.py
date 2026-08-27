@@ -50,17 +50,19 @@ class StoredConfig(s.Seared):
         identity: This instance's name on the mesh (required).
         flush_rows: Writer flush threshold in buffered rows.
         flush_secs: Writer flush threshold in seconds.
+        prune_interval: Seconds between TTL sweeps (0 disables periodic pruning).
         log_level: Root logging level name.
     """
 
-    db_path:    str   = s.Str(default='chronicle.duckdb')
-    backend:    str   = s.Str(default='duckdb')
-    streams:    list  = s.T(StreamSpec, many=True, default_factory=list)
-    zenoh:      dict  = s.Dict(default_factory=dict)
-    identity:   str   = s.Str(required=True)
-    flush_rows: int   = s.Int(default=1000)
-    flush_secs: float = s.Float(default=1.0)
-    log_level:  str   = s.Str(default='INFO')
+    db_path:        str   = s.Str(default='chronicle.duckdb')
+    backend:        str   = s.Str(default='duckdb')
+    streams:        list  = s.T(StreamSpec, many=True, default_factory=list)
+    zenoh:          dict  = s.Dict(default_factory=dict)
+    identity:       str   = s.Str(required=True)
+    flush_rows:     int   = s.Int(default=1000)
+    flush_secs:     float = s.Float(default=1.0)
+    prune_interval: float = s.Float(default=300.0)
+    log_level:      str   = s.Str(default='INFO')
 
     @classmethod
     def from_env(cls, prefix: str = _ENV_PREFIX_DEFAULT) -> StoredConfig:
@@ -87,6 +89,7 @@ class StoredConfig(s.Seared):
             ('IDENTITY', 'identity', str),
             ('FLUSH_ROWS', 'flush_rows', int),
             ('FLUSH_SECS', 'flush_secs', float),
+            ('PRUNE_INTERVAL', 'prune_interval', float),
             ('LOG_LEVEL', 'log_level', str),
         ):
             raw = os.environ.get(f'{prefix}{env_key}')

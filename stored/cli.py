@@ -46,9 +46,11 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     """Force a one-off TTL sweep and report the row count removed."""
     cfg = _load_config(args.config)
     from .store import Store
+    from .zenoh.daemon import register_streams
 
     store = Store(cfg.db_path, backend=cfg.backend)
     try:
+        register_streams(store, cfg)
         removed = store.prune()
     finally:
         store.close()
