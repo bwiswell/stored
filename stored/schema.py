@@ -1,13 +1,15 @@
 """Map ``seared`` classes to backend table shapes.
 
-The row model is *typed columns for scalar fields + a blob for the remainder*.
-Scalar seared fields become real columns (columnar compression + SQL
-predicates); nested/collection/array fields fall back to a single ``_payload``
-blob (full fidelity, no server-side filtering) in v1.
+``_payload`` holds the full message as a seared JSON string — the lossless
+source for rehydration — and scalar seared fields are additionally projected
+into typed columns (columnar compression + SQL predicates on those dimensions).
+Nested/collection/array fields have no column; they round-trip through
+``_payload`` only.
 
 .. note::
-   M0 scaffold: the type map and meta columns are final; DDL emission and table
-   reconciliation land in M1.
+   v1 keeps the *whole* message in ``_payload`` for simple, lossless
+   rehydration; slimming it to just the non-column fields is a later
+   optimization.
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ SCALAR_TYPES: dict[str, str] = {
     'UUID': 'VARCHAR',
     'Enum': 'VARCHAR',
     'Bytes': 'BLOB',
-    'DateTime': 'TIMESTAMPTZ',
+    'DateTime': 'TIMESTAMP',
     'Date': 'DATE',
     'Time': 'TIME',
     'TimeDelta': 'INTERVAL',
@@ -43,12 +45,12 @@ COMPLEX_FIELDS: frozenset[str] = frozenset(
 META_COLUMNS: dict[str, str] = {
     '_key_expr': 'VARCHAR',
     '_ts_hlc': 'VARCHAR',
-    '_issued_at': 'TIMESTAMPTZ',
+    '_issued_at': 'TIMESTAMP',
     '_source': 'VARCHAR',
     '_schema': 'VARCHAR',
-    '_recv_at': 'TIMESTAMPTZ',
+    '_recv_at': 'TIMESTAMP',
     '_ts_source': 'VARCHAR',
-    '_payload': 'BLOB',
+    '_payload': 'VARCHAR',
 }
 
 PRIMARY_KEY: tuple[str, str] = ('_key_expr', '_ts_hlc')

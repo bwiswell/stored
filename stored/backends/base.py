@@ -52,15 +52,15 @@ class StorageBackend(Protocol):
         self,
         sql: str,
         params: Sequence[Any] = (),
-    ) -> list[tuple[Any, ...]]:
-        """Run a read-only ``sql`` query and return all rows.
+    ) -> list[dict[str, Any]]:
+        """Run a read-only ``sql`` query and return all rows as column dicts.
 
         Args:
             sql: A parameterized SELECT statement.
             params: Positional bind parameters.
 
         Returns:
-            The result rows as tuples.
+            The result rows, each a column-name-keyed dict.
         """
         ...
 

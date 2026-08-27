@@ -1,3 +1,5 @@
+import datetime
+
 from stored.backends.duckdb_ import DuckDBBackend
 
 
@@ -12,3 +14,56 @@ def test_open_file_and_close(tmp_path):
     backend = DuckDBBackend(path)
     assert backend.path == path
     backend.close()
+
+
+def test_ensure_append_select_round_trip():
+    backend = DuckDBBackend(':memory:')
+    try:
+        columns = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', 'id': 'BIGINT'}
+        backend.ensure_table('t', columns, ('_key_expr', '_ts_hlc'))
+        backend.append_batch('t', [
+            {'_key_expr': 'k', '_ts_hlc': 'a', 'id': 1},
+            {'_key_expr': 'k', '_ts_hlc': 'b', 'id': 2},
+        ])
+        rows = backend.select('SELECT * FROM "t" ORDER BY "_ts_hlc"')
+        assert [r['id'] for r in rows] == [1, 2]
+        assert rows[0]['_key_expr'] == 'k'
+    finally:
+        backend.close()
+
+
+def test_append_ignores_primary_key_conflict():
+    backend = DuckDBBackend(':memory:')
+    try:
+        backend.ensure_table('t', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR'}, ('_key_expr', '_ts_hlc'))
+        backend.append_batch('t', [{'_key_expr': 'k', '_ts_hlc': 'a'}])
+        backend.append_batch('t', [{'_key_expr': 'k', '_ts_hlc': 'a'}])
+        assert len(backend.select('SELECT * FROM "t"')) == 1
+    finally:
+        backend.close()
+
+
+def test_ensure_table_adds_missing_column():
+    backend = DuckDBBackend(':memory:')
+    try:
+        pk = ('_key_expr', '_ts_hlc')
+        base = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR'}
+        backend.ensure_table('t', base, pk)
+        backend.ensure_table('t', {**base, 'extra': 'BIGINT'}, pk)
+        backend.append_batch('t', [{'_key_expr': 'k', '_ts_hlc': 'a', 'extra': 9}])
+        assert backend.select('SELECT * FROM "t"')[0]['extra'] == 9
+    finally:
+        backend.close()
+
+
+def test_delete_before_is_stubbed():
+    backend = DuckDBBackend(':memory:')
+    try:
+        raised = False
+        try:
+            backend.delete_before('t', '_issued_at', datetime.datetime.now(datetime.UTC))
+        except NotImplementedError:
+            raised = True
+        assert raised
+    finally:
+        backend.close()

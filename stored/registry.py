@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import seared as s
+
 from . import schema
 from .errors import RegistrationError
 
@@ -24,7 +26,7 @@ class Stream:
         index: Extra field names to index as queryable dimensions.
     """
 
-    cls: type
+    cls: type[s.Seared]
     table: str
     retention: str | None = None
     archive: str | None = None
@@ -41,7 +43,7 @@ class StreamRegistry:
 
     def add(
         self,
-        cls: type,
+        cls: type[s.Seared],
         *,
         retention: str | None = None,
         archive: str | None = None,
@@ -56,13 +58,11 @@ class StreamRegistry:
             index: Extra field names to index.
 
         Raises:
-            RegistrationError: If ``cls`` lacks the seared field layout or is
-                already registered.
+            RegistrationError: If ``cls`` is not a seared class or is already
+                registered.
         """
-        if not hasattr(cls, '__seared_fields__'):
-            raise RegistrationError(
-                f'{cls!r} is not a seared class (no __seared_fields__)',
-            )
+        if not (isinstance(cls, type) and issubclass(cls, s.Seared)):
+            raise RegistrationError(f'{cls!r} is not a seared class')
         if cls in self._by_cls:
             raise RegistrationError(f'{cls.__name__} is already registered')
         stream = Stream(
@@ -75,7 +75,7 @@ class StreamRegistry:
         self._by_cls[cls] = stream
         return stream
 
-    def get(self, cls: type) -> Stream:
+    def get(self, cls: type[s.Seared]) -> Stream:
         """Return the :class:`Stream` for ``cls``.
 
         Raises:
