@@ -107,8 +107,16 @@ class DuckDBBackend:
         column: str,
         cutoff: datetime,
     ) -> int:
-        """Delete rows older than ``cutoff``. Stub — implemented in M2."""
-        raise NotImplementedError('DuckDBBackend.delete_before lands in M2')
+        """Delete rows of ``table`` whose ``column`` is older than ``cutoff``.
+
+        Returns the number of rows removed (via ``DELETE ... RETURNING``).
+        """
+        sql = f'DELETE FROM "{table}" WHERE "{column}" < ? RETURNING 1'
+        try:
+            deleted = self._conn.execute(sql, [cutoff]).fetchall()
+        except duckdb.Error as exc:
+            raise BackendError(f'delete_before({table!r}) failed: {exc}') from exc
+        return len(deleted)
 
     def close(self) -> None:
         """Close the DuckDB connection."""

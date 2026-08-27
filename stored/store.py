@@ -6,11 +6,13 @@ chronicler (``stored.zenoh``) wires a ``Store`` to a ``zeared`` session, but the
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import seared as s
 
 from . import schema
+from ._time import parse_duration
 from .backends.base import StorageBackend
 from .backends.duckdb_ import DuckDBBackend
 from .errors import ConfigError
@@ -18,6 +20,8 @@ from .log import get_logger
 from .query import parse_window, plan
 from .registry import Stream, StreamRegistry
 from .row import build_row, rehydrate
+from .ttl import Reaper
+from .writer import Writer
 
 _log = get_logger('store')
 
@@ -32,16 +36,38 @@ def _make_backend(backend: str, path: str) -> StorageBackend:
 class Store:
     """A persistence store over a pluggable :class:`StorageBackend`.
 
+    Records are buffered by a batched :class:`~stored.writer.Writer` and flushed
+    by count or interval; ``query`` flushes first, so reads always see prior
+    writes (read-your-writes).
+
     Args:
         path: Path to the backing database file.
         backend: Backend name (``'duckdb'``; ``'postgres'`` later).
+        flush_rows: Writer flush threshold in buffered rows.
+        flush_secs: Writer flush interval in seconds (``0`` disables the timer).
     """
 
-    __slots__ = ('_backend', '_registry')
+    __slots__ = ('_backend', '_registry', '_lock', '_writer', '_reaper')
 
-    def __init__(self, path: str = 'chronicle.duckdb', *, backend: str = 'duckdb') -> None:
+    def __init__(
+        self,
+        path: str = 'chronicle.duckdb',
+        *,
+        backend: str = 'duckdb',
+        flush_rows: int = 1000,
+        flush_secs: float = 1.0,
+    ) -> None:
+        self._lock = threading.RLock()
         self._backend = _make_backend(backend, path)
         self._registry = StreamRegistry()
+        self._writer = Writer(
+            self._backend,
+            flush_rows=flush_rows,
+            flush_secs=flush_secs,
+            backend_lock=self._lock,
+        )
+        self._writer.start()
+        self._reaper = Reaper(self._backend, self._registry)
 
     @property
     def registry(self) -> StreamRegistry:
@@ -71,9 +97,18 @@ class Store:
 
         Returns:
             The registered :class:`Stream`.
+
+        Raises:
+            ConfigError: If ``retention`` is not a valid duration.
         """
+        if retention is not None:
+            try:
+                parse_duration(retention)
+            except ValueError as exc:
+                raise ConfigError(f'invalid retention {retention!r}: {exc}') from exc
         stream = self._registry.add(cls, retention=retention, archive=archive, index=index)
-        self._backend.ensure_table(stream.table, schema.derive_columns(cls), schema.PRIMARY_KEY)
+        with self._lock:
+            self._backend.ensure_table(stream.table, schema.derive_columns(cls), schema.PRIMARY_KEY)
         return stream
 
     def record(
@@ -84,7 +119,7 @@ class Store:
         meta: Any = None,
         key: str | None = None,
     ) -> None:
-        """Persist one message.
+        """Buffer one message for persistence (flushed by the writer).
 
         Args:
             cls: The registered message class.
@@ -93,7 +128,7 @@ class Store:
             key: Explicit ``_key_expr`` when there is no ``meta``.
         """
         stream = self._registry.get(cls)
-        self._backend.append_batch(stream.table, [build_row(stream, msg, meta, key=key)])
+        self._writer.enqueue(stream.table, build_row(stream, msg, meta, key=key))
 
     def query(
         self,
@@ -106,7 +141,7 @@ class Store:
         order: str = 'asc',
         **filters: Any,
     ) -> list[s.Seared]:
-        """Query stored history for ``cls``.
+        """Query stored history for ``cls`` (flushes pending writes first).
 
         Args:
             cls: The registered message class.
@@ -123,19 +158,25 @@ class Store:
         stream = self._registry.get(cls)
         window = parse_window(since=since, until=until, limit=limit, order=order)
         sql, params = plan(stream, key or '', window, filters or None)
-        return [rehydrate(stream, columns) for columns in self._backend.select(sql, params)]
+        self._writer.flush()
+        with self._lock:
+            rows = self._backend.select(sql, params)
+        return [rehydrate(stream, columns) for columns in rows]
 
     def flush(self) -> None:
-        """Flush buffered writes. Stub — implemented in M2."""
-        raise NotImplementedError('Store.flush lands in M2')
+        """Flush buffered writes to the backend."""
+        self._writer.flush()
 
     def prune(self) -> int:
-        """Force a TTL sweep. Stub — implemented in M2."""
-        raise NotImplementedError('Store.prune lands in M2')
+        """Force a TTL sweep across all streams; return the row count removed."""
+        with self._lock:
+            return self._reaper.sweep()
 
     def close(self) -> None:
-        """Close the store and its backend."""
-        self._backend.close()
+        """Flush, stop the writer, and close the backend."""
+        self._writer.close()
+        with self._lock:
+            self._backend.close()
 
 
 __all__ = ['Store']

@@ -1,24 +1,24 @@
 """The TTL reaper.
 
 Unlike zeared's lazy last-value expiry, ``stored`` runs an active sweeper: a
-periodic ``DELETE`` of rows older than each stream's retention horizon, followed
-by a checkpoint. Needed because medium retention over high-rate streams must
-reclaim disk.
-
-.. note::
-   M0 scaffold: sweeping and scheduling land in M2.
+``DELETE`` of rows older than each stream's retention horizon. It is invoked on
+demand here (``Store.prune`` / the ``prune`` CLI); periodic scheduling is wired
+into the daemon in M4.
 """
 from __future__ import annotations
 
+from ._time import parse_duration, utcnow
 from .backends.base import StorageBackend
 from .log import get_logger
 from .registry import Stream, StreamRegistry
 
 _log = get_logger('ttl')
 
+_ISSUED_AT = '_issued_at'
+
 
 class Reaper:
-    """Periodically expires rows past each stream's retention horizon.
+    """Expires rows past each stream's retention horizon.
 
     Args:
         backend: The storage backend to delete from.
@@ -32,12 +32,24 @@ class Reaper:
         self._registry = registry
 
     def sweep_stream(self, stream: Stream) -> int:
-        """Expire rows for one ``stream``; return the count deleted."""
-        raise NotImplementedError('Reaper.sweep_stream lands in M2')
+        """Expire rows for one ``stream``; return the count deleted.
+
+        A stream with no retention horizon is skipped (returns 0).
+        """
+        if stream.retention is None:
+            return 0
+        cutoff = utcnow() - parse_duration(stream.retention)
+        removed = self._backend.delete_before(stream.table, _ISSUED_AT, cutoff)
+        if removed:
+            _log.info(
+                'pruned %d rows from %s (retention=%s)',
+                removed, stream.table, stream.retention,
+            )
+        return removed
 
     def sweep(self) -> int:
-        """Expire rows for every stream; return the total count deleted."""
-        raise NotImplementedError('Reaper.sweep lands in M2')
+        """Expire rows for every registered stream; return the total deleted."""
+        return sum(self.sweep_stream(stream) for stream in self._registry.all())
 
 
 __all__ = ['Reaper']

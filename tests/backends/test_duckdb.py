@@ -56,14 +56,19 @@ def test_ensure_table_adds_missing_column():
         backend.close()
 
 
-def test_delete_before_is_stubbed():
+def test_delete_before_removes_old_rows():
     backend = DuckDBBackend(':memory:')
     try:
-        raised = False
-        try:
-            backend.delete_before('t', '_issued_at', datetime.datetime.now(datetime.UTC))
-        except NotImplementedError:
-            raised = True
-        assert raised
+        cols = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_issued_at': 'TIMESTAMP'}
+        backend.ensure_table('t', cols, ('_key_expr', '_ts_hlc'))
+        backend.append_batch('t', [
+            {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': datetime.datetime(2026, 1, 1)},
+            {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': datetime.datetime(2026, 8, 1)},
+        ])
+        removed = backend.delete_before('t', '_issued_at', datetime.datetime(2026, 6, 1))
+        assert removed == 1
+        rows = backend.select('SELECT * FROM "t"')
+        assert len(rows) == 1
+        assert rows[0]['_ts_hlc'] == 'b'
     finally:
         backend.close()
