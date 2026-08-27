@@ -1,27 +1,28 @@
 """Zenoh session wiring for the chronicler.
 
-Opens a managed session with timestamping enabled — the chronicler depends on
-Zenoh HLC timestamps for ordering and dedup, so ``timestamping=True`` is
+Opens a session with timestamping enabled — the chronicler depends on Zenoh HLC
+timestamps for ordering and dedup, so timestamping (zeared's default) is
 mandatory, not optional.
-
-.. note::
-   M0 scaffold: session construction lands in M3.
 """
 from __future__ import annotations
 
 from typing import Any
 
+import zeared as z
+
 
 def open_session(zenoh_config: dict[str, Any]) -> Any:
-    """Open a managed, timestamped zeared session from ``zenoh_config``.
+    """Open a timestamped zeared session from a ``zenoh_config`` mapping.
 
     Args:
-        zenoh_config: Connection spec mapped onto ``z.SessionConfig``.
+        zenoh_config: Connection spec mapped onto :class:`zeared.SessionConfig`
+            (must include ``mode``, e.g. ``{'mode': 'peer'}`` or
+            ``{'mode': 'client', 'router': 'tcp/host:7447'}``).
 
     Returns:
-        An open managed ``zeared`` session.
+        An open ``zeared`` session (timestamping enabled by the factory default).
     """
-    raise NotImplementedError('zenoh.session.open_session lands in M3')
+    return z.open(z.SessionConfig.load(zenoh_config))
 
 
 __all__ = ['open_session']
