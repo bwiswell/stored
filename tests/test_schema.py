@@ -20,6 +20,12 @@ def test_primary_key_and_meta_columns():
         assert col in schema.META_COLUMNS
 
 
+def test_event_at_is_a_timestamp_meta_column():
+    assert schema.META_COLUMNS['_event_at'] == 'TIMESTAMP'
+    assert schema.EVENT_AT == '_event_at'
+    assert schema.ISSUED_AT == '_issued_at'
+
+
 def test_derive_columns_maps_scalars():
     cols = schema.derive_columns(Sample)
     assert cols['id'] == 'BIGINT'

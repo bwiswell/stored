@@ -12,6 +12,12 @@ class Msg(s.Seared):
     id: int = s.Int(required=True)
 
 
+@s.seared
+class Obs(s.Seared):
+    id:          int   = s.Int(required=True)
+    observed_at: float = s.Float(required=True)
+
+
 class Meta:
     def __init__(self, key, ts, issued_at):
         self.key_expr = key
@@ -45,6 +51,25 @@ def test_prune_noop_without_retention(tmp_path):
         store.flush()
         assert store.prune() == 0
         assert len(store.query(Msg)) == 1
+    finally:
+        store.close()
+
+
+def test_prune_keys_on_event_time_not_delivery_time(tmp_path):
+    # Both rows are *delivered* now (recent issued_at); only their domain event
+    # time (observed_at) differs — retention must key on the event time.
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
+    try:
+        store.register(Obs, retention='7d', time_field='observed_at')
+        now = datetime.datetime.now(datetime.UTC)
+        old_event = (now - datetime.timedelta(days=8)).timestamp()
+        new_event = now.timestamp()
+        store.record(Obs, Obs(id=1, observed_at=old_event), meta=Meta('k1', 't1', now))
+        store.record(Obs, Obs(id=2, observed_at=new_event), meta=Meta('k2', 't2', now))
+        store.flush()
+
+        assert store.prune() == 1  # the row old by event time, though issued recently
+        assert [r.id for r in store.query(Obs)] == [2]
     finally:
         store.close()
 

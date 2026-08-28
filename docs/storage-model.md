@@ -12,6 +12,7 @@ Meta columns come first, then one column per **scalar** seared field:
 | `_key_expr`  | `VARCHAR`   | `meta.key_expr` (concrete topic) — PK     |
 | `_ts_hlc`    | `VARCHAR`   | `meta.timestamp` (HLC, sortable) — PK      |
 | `_issued_at` | `TIMESTAMP` | `meta.issued_at` (naive UTC)              |
+| `_event_at`  | `TIMESTAMP` | the stream's `time_field`, normalized (NULL if none) |
 | `_source`    | `VARCHAR`   | `meta.source_info`                        |
 | `_schema`    | `VARCHAR`   | `meta.schema` (SCHEMA version tag)        |
 | `_recv_at`   | `TIMESTAMP` | local receive time                        |
@@ -26,6 +27,26 @@ Meta columns come first, then one column per **scalar** seared field:
   via `Cls.loads(...)`; the scalar columns are projections for filtering. (v1
   keeps the whole message in `_payload`; slimming it to non-column fields is a
   later optimization.)
+
+## Event time (`time_field`)
+
+By default `stored` orders, ranges, and expires on `_issued_at` — the mesh
+delivery/issue time. A stream may instead key on its **domain event time** by
+naming a payload field at registration:
+
+```python
+store.register(Location, retention='7d', time_field='observed_at')
+```
+
+The row builder normalizes that field into the `_event_at` column — a numeric field
+is read as **unix epoch seconds** (UTC), a `datetime` is canonicalized, a bare `date`
+becomes midnight UTC — and the reaper and query planner then key on `_event_at`
+instead of `_issued_at`. `time_field` must name an `Int`/`Float`/`DateTime`/`Date`
+field (an absolute instant), checked at registration. So a late-delivered but older
+observation prunes and sorts by *when it happened*, not when it arrived — what a
+historian needs. Streams with no `time_field` are unchanged: `_event_at` is `NULL`
+and everything keys on `_issued_at` exactly as before. (A single field, no fallback
+chain — deliberate; revisit only if a stream needs one.)
 
 ## Type map (scalar fields)
 
@@ -58,8 +79,9 @@ configured stream.
 
 - per-stream `retention` horizon (`'7d'`, `'48h'`, `'30m'`, …; `None` = keep
   forever), validated at `register`;
-- `Reaper.sweep` deletes rows whose `_issued_at` is older than `now − retention`
-  (`DELETE … RETURNING`, returning the exact count);
+- `Reaper.sweep` deletes rows whose temporal axis (`_event_at` for an event-time
+  stream, else `_issued_at`) is older than `now − retention`, returning the exact
+  count;
 - driven by `Store.prune`, the `prune` CLI, and the daemon's periodic reaper
   (`prune_interval`, default 300 s; `0` disables).
 

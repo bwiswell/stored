@@ -22,10 +22,11 @@ config layer.
 
 | Field       | Type          | Default | Notes                                    |
 |-------------|---------------|---------|------------------------------------------|
-| `cls`       | `str` (req.)  | —       | Import path, `'module:ClassName'`.       |
-| `retention` | `str \| None` | `None`  | `'7d'`, `'48h'`, … (`None` = forever).   |
-| `archive`   | `str \| None` | `None`  | Cold-archival horizon (roadmap).         |
-| `index`     | `list[str]`   | `[]`    | Extra field dimensions to filter on.     |
+| `cls`        | `str` (req.)  | —       | Import path, `'module:ClassName'`.       |
+| `retention`  | `str \| None` | `None`  | `'7d'`, `'48h'`, … (`None` = forever).   |
+| `archive`    | `str \| None` | `None`  | Cold-archival horizon (roadmap).         |
+| `index`      | `list[str]`   | `[]`    | Extra field dimensions to filter on.     |
+| `time_field` | `str \| None` | `None`  | Payload field to key retention/queries on (domain event time); `None` uses mesh `_issued_at`. See storage-model. |
 
 ## From the environment
 
@@ -57,6 +58,7 @@ index = ["reader_id"]
 [[streams]]
 cls = "rio_protocol.messages:Location"
 retention = "48h"
+time_field = "observed_at"   # prune/range by domain event time, not mesh delivery time
 ```
 
 Load precedence: `stored -c <file>` reads the TOML; otherwise config comes from

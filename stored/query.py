@@ -1,9 +1,10 @@
 """The history query planner.
 
 Turns a time window + topic key + optional field filters into a parameterized
-SELECT against a stream table, ordered by ``_issued_at`` (then ``_ts_hlc`` as a
-stable tiebreaker). Used by both the Python ``Store.query`` surface and the mesh
-``on_query`` serve path.
+SELECT against a stream table, ordered by the stream's temporal axis
+(``stream.time_column`` — ``_event_at`` when a ``time_field`` is set, else
+``_issued_at``; then ``_ts_hlc`` as a stable tiebreaker). Used by both the Python
+``Store.query`` surface and the mesh ``on_query`` serve path.
 """
 from __future__ import annotations
 
@@ -109,15 +110,16 @@ def plan(
     """
     where: list[str] = []
     params: list[Any] = []
+    time_col = stream.time_column
 
     if key_expr:
         where.append('"_key_expr" GLOB ?' if '*' in key_expr else '"_key_expr" = ?')
         params.append(key_expr)
     if window.start is not None:
-        where.append('"_issued_at" >= ?')
+        where.append(f'"{time_col}" >= ?')
         params.append(window.start)
     if window.end is not None:
-        where.append('"_issued_at" <= ?')
+        where.append(f'"{time_col}" <= ?')
         params.append(window.end)
     if filters:
         allowed = set(stream.index)
@@ -134,7 +136,7 @@ def plan(
     direction = 'ASC' if window.ascending else 'DESC'
     sql = (
         f'SELECT * FROM "{stream.table}"{clause} '
-        f'ORDER BY "_issued_at" {direction}, "_ts_hlc" {direction} '
+        f'ORDER BY "{time_col}" {direction}, "_ts_hlc" {direction} '
         f'LIMIT {int(window.limit)}'
     )
     return sql, params

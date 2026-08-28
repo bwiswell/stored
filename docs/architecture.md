@@ -74,11 +74,12 @@ Everything stored and queried is **naive UTC** (`TIMESTAMP` columns).
 Canonicalizing to naive UTC at the boundary keeps storage dependency-free across
 backends — DuckDB's client would otherwise need `pytz` for `TIMESTAMPTZ`, and the
 SQLite backend stores ISO-8601 text whose lexical order is chronological.
-`_issued_at` is the temporal
-source of truth for range queries; `_ts_hlc` is the dedup/ordering tiebreaker
-(HLC strings are lexicographically == temporally ordered). Records with no HLC
-stamp get a synthesized, unique, sortable `_ts_hlc` and fall back to receive
-time (`_ts_source = 'recv'`).
+`_issued_at` (the mesh delivery/issue time) is the default temporal axis for range
+queries and retention; a stream may instead key on its **domain event time** via a
+`time_field`, normalized into `_event_at` (see storage-model). `_ts_hlc` is the
+dedup/ordering tiebreaker (HLC strings are lexicographically == temporally ordered).
+Records with no HLC stamp get a synthesized, unique, sortable `_ts_hlc` and fall
+back to receive time (`_ts_source = 'recv'`).
 
 ## Concurrency
 

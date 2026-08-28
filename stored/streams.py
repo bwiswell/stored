@@ -51,7 +51,9 @@ def register_streams(store: Store, config: StoredConfig) -> None:
     """
     for spec in config.streams:
         cls = resolve_stream_class(spec)
-        store.register(cls, retention=spec.retention, index=tuple(spec.index))
+        store.register(
+            cls, retention=spec.retention, index=tuple(spec.index), time_field=spec.time_field,
+        )
 
 
 __all__ = ['resolve_stream_class', 'register_streams']

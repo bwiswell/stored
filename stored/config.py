@@ -30,12 +30,16 @@ class StreamSpec(s.Seared):
             rows forever.
         archive: Cold-archival horizon (roadmap); ``None`` disables archival.
         index: Extra field names to index as queryable dimensions.
+        time_field: A payload field naming the domain event time — retention and
+            range queries key off it instead of the mesh delivery time. ``None``
+            keeps the default (mesh ``_issued_at``).
     """
 
-    cls:       str        = s.Str(required=True)
-    retention: str | None = s.Str(default=None)
-    archive:   str | None = s.Str(default=None)
-    index:     list       = s.Str(many=True, default_factory=list)
+    cls:        str        = s.Str(required=True)
+    retention:  str | None = s.Str(default=None)
+    archive:    str | None = s.Str(default=None)
+    index:      list       = s.Str(many=True, default_factory=list)
+    time_field: str | None = s.Str(default=None)
 
 
 @s.seared

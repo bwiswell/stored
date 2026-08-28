@@ -46,6 +46,7 @@ META_COLUMNS: dict[str, str] = {
     '_key_expr': 'VARCHAR',
     '_ts_hlc': 'VARCHAR',
     '_issued_at': 'TIMESTAMP',
+    '_event_at': 'TIMESTAMP',
     '_source': 'VARCHAR',
     '_schema': 'VARCHAR',
     '_recv_at': 'TIMESTAMP',
@@ -54,6 +55,16 @@ META_COLUMNS: dict[str, str] = {
 }
 
 PRIMARY_KEY: tuple[str, str] = ('_key_expr', '_ts_hlc')
+
+#: Temporal-axis column names. ``_issued_at`` is the mesh delivery/issue time (the
+#: default axis for retention + range queries); ``_event_at`` is the normalized
+#: **domain event time**, populated from a stream's ``time_field`` when set (NULL
+#: otherwise). A stream keys retention/queries off whichever its ``time_column`` names.
+ISSUED_AT: str = '_issued_at'
+EVENT_AT: str = '_event_at'
+
+#: Seared field kinds a ``time_field`` may name — an absolute instant only.
+TIME_FIELD_KINDS: frozenset[str] = frozenset({'Int', 'Float', 'DateTime', 'Date'})
 
 
 def column_type(field: Any) -> str | None:
@@ -108,6 +119,9 @@ __all__ = [
     'COMPLEX_FIELDS',
     'META_COLUMNS',
     'PRIMARY_KEY',
+    'ISSUED_AT',
+    'EVENT_AT',
+    'TIME_FIELD_KINDS',
     'column_type',
     'derive_columns',
     'table_name',

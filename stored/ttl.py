@@ -14,8 +14,6 @@ from .registry import Stream, StreamRegistry
 
 _log = get_logger('ttl')
 
-_ISSUED_AT = '_issued_at'
-
 
 class Reaper:
     """Expires rows past each stream's retention horizon.
@@ -39,11 +37,11 @@ class Reaper:
         if stream.retention is None:
             return 0
         cutoff = utcnow() - parse_duration(stream.retention)
-        removed = self._backend.delete_before(stream.table, _ISSUED_AT, cutoff)
+        removed = self._backend.delete_before(stream.table, stream.time_column, cutoff)
         if removed:
             _log.info(
-                'pruned %d rows from %s (retention=%s)',
-                removed, stream.table, stream.retention,
+                'pruned %d rows from %s (retention=%s, by=%s)',
+                removed, stream.table, stream.retention, stream.time_column,
             )
         return removed
 

@@ -96,6 +96,7 @@ class Store:
         retention: str | None = None,
         archive: str | None = None,
         index: tuple[str, ...] = (),
+        time_field: str | None = None,
     ) -> Stream:
         """Register a message class as a recorded stream and create its table.
 
@@ -104,19 +105,24 @@ class Store:
             retention: Retention horizon (e.g. ``'7d'``), or ``None``.
             archive: Cold-archival horizon (roadmap), or ``None``.
             index: Extra field names to index as queryable dimensions.
+            time_field: A payload field naming the **domain event time** — retention
+                and range queries key off it instead of the mesh delivery time.
 
         Returns:
             The registered :class:`Stream`.
 
         Raises:
             ConfigError: If ``retention`` is not a valid duration.
+            RegistrationError: If ``time_field`` names no temporal field of ``cls``.
         """
         if retention is not None:
             try:
                 parse_duration(retention)
             except ValueError as exc:
                 raise ConfigError(f'invalid retention {retention!r}: {exc}') from exc
-        stream = self._registry.add(cls, retention=retention, archive=archive, index=index)
+        stream = self._registry.add(
+            cls, retention=retention, archive=archive, index=index, time_field=time_field,
+        )
         with self._lock:
             self._backend.ensure_table(stream.table, schema.derive_columns(cls), schema.PRIMARY_KEY)
         return stream
