@@ -43,8 +43,9 @@ class StoredConfig(s.Seared):
     """Top-level configuration for a ``stored`` store or chronicler daemon.
 
     Attributes:
-        db_path: Path to the backing database file (DuckDB backend).
-        backend: Storage backend name (``'duckdb'``; ``'postgres'`` later).
+        db_path: Path to the backing database file.
+        backend: Storage backend name (``'sqlite'`` default; ``'duckdb'`` via the
+            extra; ``'postgres'`` later).
         streams: Streams to record and serve.
         zenoh: Raw connection spec passed through to ``z.SessionConfig``.
         identity: This instance's name on the mesh (required).
@@ -54,8 +55,8 @@ class StoredConfig(s.Seared):
         log_level: Root logging level name.
     """
 
-    db_path:        str   = s.Str(default='chronicle.duckdb')
-    backend:        str   = s.Str(default='duckdb')
+    db_path:        str   = s.Str(default='chronicle.db')
+    backend:        str   = s.Str(default='sqlite')
     streams:        list  = s.T(StreamSpec, many=True, default_factory=list)
     zenoh:          dict  = s.Dict(default_factory=dict)
     identity:       str   = s.Str(required=True)

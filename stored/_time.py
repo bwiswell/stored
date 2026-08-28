@@ -1,8 +1,9 @@
 """Time canonicalization: everything stored and queried is naive UTC.
 
-DuckDB's Python client needs ``pytz`` to round-trip ``TIMESTAMPTZ``. We sidestep
-that dependency by canonicalizing every datetime to naive UTC at the boundary
-and storing ``TIMESTAMP`` columns — all stored times are UTC by construction.
+Canonicalizing every datetime to naive UTC at the boundary keeps storage
+dependency-free across backends — DuckDB's client would otherwise need ``pytz``
+to round-trip ``TIMESTAMPTZ``, and the SQLite backend stores ISO-8601 text whose
+lexical order is chronological. All stored times are UTC by construction.
 """
 from __future__ import annotations
 

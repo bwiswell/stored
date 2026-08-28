@@ -1,9 +1,10 @@
 """The batched writer.
 
-DuckDB is an OLAP engine — per-row inserts are slow — so records are buffered
-per table and flushed in batches, by row count or elapsed time, on a background
-thread. Idempotency on the ``(_key_expr, _ts_hlc)`` primary key makes redelivery
-a no-op.
+A statement per message is wasteful for every backend (DuckDB is columnar and
+dislikes per-row inserts; SQLite pays per-transaction overhead), so records are
+buffered per table and flushed in batches, by row count or elapsed time, on a
+background thread. Idempotency on the ``(_key_expr, _ts_hlc)`` primary key makes
+redelivery a no-op.
 
 Backend I/O is serialized through a shared lock (the owning ``Store``'s), so the
 periodic flush thread never touches the connection concurrently with a query.

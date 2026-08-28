@@ -1,6 +1,10 @@
 import datetime
 
-from stored.backends.duckdb_ import DuckDBBackend
+import pytest
+
+pytest.importorskip('duckdb')  # the DuckDB backend is the optional ``stored[duckdb]`` extra
+
+from stored.backends.duckdb_ import DuckDBBackend  # noqa: E402
 
 
 def test_open_memory_and_close():

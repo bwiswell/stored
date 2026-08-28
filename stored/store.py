@@ -14,7 +14,6 @@ import seared as s
 from . import schema
 from ._time import parse_duration
 from .backends.base import StorageBackend
-from .backends.duckdb_ import DuckDBBackend
 from .errors import ConfigError
 from .log import get_logger
 from .query import parse_window, plan
@@ -27,10 +26,20 @@ _log = get_logger('store')
 
 
 def _make_backend(backend: str, path: str) -> StorageBackend:
-    """Construct the named storage backend."""
+    """Construct the named storage backend (imported lazily, so the core stays dep-light).
+
+    The default ``sqlite`` backend is stdlib-only; ``duckdb`` needs the ``stored[duckdb]``
+    extra and is imported only when requested.
+    """
+    if backend == 'sqlite':
+        from .backends.sqlite_ import SQLiteBackend
+
+        return SQLiteBackend(path)
     if backend == 'duckdb':
+        from .backends.duckdb_ import DuckDBBackend
+
         return DuckDBBackend(path)
-    raise ConfigError(f'unknown backend {backend!r} (expected one of: duckdb)')
+    raise ConfigError(f'unknown backend {backend!r} (expected one of: sqlite, duckdb)')
 
 
 class Store:
@@ -42,7 +51,8 @@ class Store:
 
     Args:
         path: Path to the backing database file.
-        backend: Backend name (``'duckdb'``; ``'postgres'`` later).
+        backend: Backend name (``'sqlite'`` default; ``'duckdb'`` via the extra;
+            ``'postgres'`` later).
         flush_rows: Writer flush threshold in buffered rows.
         flush_secs: Writer flush interval in seconds (``0`` disables the timer).
     """
@@ -51,9 +61,9 @@ class Store:
 
     def __init__(
         self,
-        path: str = 'chronicle.duckdb',
+        path: str = 'chronicle.db',
         *,
-        backend: str = 'duckdb',
+        backend: str = 'sqlite',
         flush_rows: int = 1000,
         flush_secs: float = 1.0,
     ) -> None:

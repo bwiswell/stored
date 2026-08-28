@@ -16,18 +16,22 @@ history layer beneath [`zeared`](https://github.com/bwiswell/zeared)'s last-valu
   historical, properly-typed instances over a queryable.
 - **Bounded by design.** Per-stream **TTL** expiry now; compressed **Parquet
   archival** of cold data on the roadmap.
-- **Lean, layered deps.** The core needs only `seared` + `duckdb`. The Zenoh
-  integration is an optional extra (`stored[zenoh]`) — the core never imports
-  `zeared`.
+- **Lean, layered deps.** The core needs only `seared` (persistence rides stdlib
+  `sqlite3` — zero extra dependency). DuckDB is an optional backend
+  (`stored[duckdb]`) for analytics; the Zenoh integration is an optional extra
+  (`stored[zenoh]`) — the core never imports `zeared`.
 
 ## Install
 
 ```sh
-# core only (persist/query seared objects, no mesh)
+# core only (persist/query seared objects on stdlib sqlite3, no mesh)
 uv add git+https://github.com/bwiswell/stored
 
 # with the Zenoh chronicler
 uv add "stored[zenoh] @ git+https://github.com/bwiswell/stored"
+
+# with the DuckDB backend (analytics upgrade)
+uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored"
 ```
 
 Requires Python ≥ 3.14.
@@ -37,7 +41,7 @@ Requires Python ≥ 3.14.
 ```python
 import stored
 
-store = stored.Store('chronicle.duckdb')
+store = stored.Store('chronicle.db')
 store.register(Telemetry, retention='7d', index=('id',))
 
 store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
@@ -56,7 +60,7 @@ import zeared as z
 import stored, stored.zenoh as sz
 
 session = z.peer()                          # timestamped session
-store = stored.Store('chronicle.duckdb')
+store = stored.Store('chronicle.db')
 chronicler = sz.Chronicler(store, session)
 chronicler.add(Telemetry, retention='7d')   # subscribe + serve history
 chronicler.run()
@@ -91,16 +95,18 @@ See `systemd/stored.service` for the unit template.
 ## Development
 
 ```sh
-uv sync --extra zenoh
+uv sync --extra zenoh --extra duckdb
 uv run pytest tests/
 ```
 
-Tests mirror the source layout. The mesh tests spin up a loopback Zenoh peer;
-the core tests need no transport.
+Tests mirror the source layout. The mesh tests spin up a loopback Zenoh peer and
+the DuckDB-backend tests need their extras (both synced above); the SQLite core
+tests need no transport and no extra.
 
 ## Status
 
-The v1 core is functional: DuckDB-backed persistence, a batched writer, TTL
-pruning, the Zenoh chronicler (record + serve history), and a runnable daemon.
-Deferred: the Postgres backend, a generic `HistoryQuery` contract,
-complex-field column promotion, and the cold-archival tiers.
+The v1 core is functional: SQLite-backed persistence (stdlib; DuckDB an optional
+backend), a batched writer, TTL pruning, the Zenoh chronicler (record + serve
+history), and a runnable daemon. Deferred: the Postgres backend, a generic
+`HistoryQuery` contract, complex-field column promotion, and the cold-archival
+tiers.

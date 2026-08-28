@@ -9,8 +9,8 @@ config layer.
 | Field            | Type              | Default             | Notes                                  |
 |------------------|-------------------|---------------------|----------------------------------------|
 | `identity`       | `str` (required)  | —                   | This instance's name on the mesh.      |
-| `db_path`        | `str`             | `chronicle.duckdb`  | Backing database file.                 |
-| `backend`        | `str`             | `duckdb`            | `postgres` is a later backend.         |
+| `db_path`        | `str`             | `chronicle.db`      | Backing database file.                 |
+| `backend`        | `str`             | `sqlite`            | `duckdb` (via `stored[duckdb]`); `postgres` later. |
 | `streams`        | `list[StreamSpec]`| `[]`                | What to record and serve.              |
 | `zenoh`          | `dict`            | `{}`                | Mapped onto `zeared.SessionConfig`.    |
 | `flush_rows`     | `int`             | `1000`              | Writer flush threshold (rows).         |
@@ -35,14 +35,14 @@ env-mapped — supply it via TOML (nested-list env nesting is out of scope).
 
 ```sh
 export STORED_IDENTITY=chronicler-1
-export STORED_DB_PATH=/var/lib/stored/chronicle.duckdb
+export STORED_DB_PATH=/var/lib/stored/chronicle.db
 ```
 
 ## From TOML
 
 ```toml
 identity = "chronicler-1"
-db_path = "/var/lib/stored/chronicle.duckdb"
+db_path = "/var/lib/stored/chronicle.db"
 prune_interval = 300
 
 [zenoh]

@@ -17,7 +17,7 @@ import stored
 import stored.zenoh as sz
 
 session = z.peer()                       # timestamped session
-store = stored.Store('chronicle.duckdb')
+store = stored.Store('chronicle.db')
 chronicler = sz.Chronicler(store, session)
 
 chronicler.add(Telemetry, retention='7d', index=('id',))

@@ -33,6 +33,13 @@ Meta columns come first, then one column per **scalar** seared field:
 `Bytes→BLOB`, `DateTime→TIMESTAMP`, `Date→DATE`, `Time→TIME`,
 `TimeDelta→INTERVAL`, `Decimal→DECIMAL(38,9)`.
 
+These are the **backend-neutral** (DuckDB-spelled) type names; each backend remaps
+them to its own dialect. The **SQLite backend** (the default) maps them to SQLite
+declared types (`BIGINT→INTEGER`, `DOUBLE→REAL`, `VARCHAR→TEXT`, …) and stores
+temporal values as ISO-8601 **text** — lexicographic order matches chronological
+order, so range/retention comparisons stay correct — registering adapters/converters
+so they still bind and read back as native `datetime`/`date`/`time`/`Decimal`.
+
 **Complex fields** — nested (`T`), tagged unions (`Union`), collections
 (`many` / `keyed`), arrays/frames (`NDArray`, `PandasFrame`, `PolarsFrame`) —
 have no column; they round-trip through `_payload` only.

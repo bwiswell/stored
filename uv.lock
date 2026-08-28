@@ -237,11 +237,13 @@ name = "stored"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "duckdb" },
     { name = "seared" },
 ]
 
 [package.optional-dependencies]
+duckdb = [
+    { name = "duckdb" },
+]
 zenoh = [
     { name = "zeared" },
 ]
@@ -257,11 +259,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "duckdb", specifier = ">=1.1" },
+    { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.1" },
     { name = "seared", git = "https://github.com/bwiswell/seared" },
     { name = "zeared", marker = "extra == 'zenoh'", git = "https://github.com/bwiswell/zeared" },
 ]
-provides-extras = ["zenoh"]
+provides-extras = ["zenoh", "duckdb"]
 
 [package.metadata.requires-dev]
 dev = [
