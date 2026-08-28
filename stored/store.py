@@ -230,12 +230,38 @@ class Store:
             rows = self._backend.select(sql, params)
         return rehydrate(stream, rows[0]) if rows else None
 
+    def counts(self, cls: type[s.Seared]) -> tuple[int, int]:
+        """Row counts ``(history, latest)`` for ``cls`` — for observability/status.
+
+        Flushes pending writes first (so the counts reflect everything recorded).
+        ``latest`` is ``0`` when the stream has no latest projection.
+
+        Args:
+            cls: A registered message class.
+
+        Returns:
+            ``(history_rows, latest_rows)``.
+        """
+        stream = self._registry.get(cls)
+        self._writer.flush()
+        with self._lock:
+            history = self._backend.select(f'SELECT COUNT(*) AS n FROM "{stream.table}"')[0]['n']  # noqa: S608 (quoted identifier)
+            latest = 0
+            if stream.has_latest:
+                latest = self._backend.select(f'SELECT COUNT(*) AS n FROM "{stream.latest_table}"')[0]['n']  # noqa: S608 (quoted identifier)
+        return int(history), int(latest)
+
     def flush(self) -> None:
         """Flush buffered writes to the backend."""
         self._writer.flush()
 
     def prune(self) -> int:
-        """Force a TTL sweep across all streams; return the row count removed."""
+        """Force a TTL sweep across all streams; return the row count removed.
+
+        Flushes pending writes first, so buffered rows are subject to the same sweep
+        (consistent with :meth:`query` / :meth:`latest` read-your-writes).
+        """
+        self._writer.flush()
         with self._lock:
             return self._reaper.sweep()
 
