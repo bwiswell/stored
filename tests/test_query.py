@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 import seared as s
 
@@ -45,6 +47,17 @@ def test_parse_window_order_desc():
 def test_parse_window_bad_time_raises():
     with pytest.raises(QueryError):
         query.parse_window(since='not-a-time')
+
+
+def test_parse_window_unix_seconds_bound():
+    ts = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.UTC).timestamp()
+    window = query.parse_window(since=ts)
+    assert window.start == datetime.datetime(2026, 1, 1, 12, 0)  # naive UTC
+
+
+def test_parse_window_datetime_bound():
+    window = query.parse_window(until=datetime.datetime(2026, 3, 1, tzinfo=datetime.UTC))
+    assert window.end == datetime.datetime(2026, 3, 1)
 
 
 def test_plan_builds_sql_and_params():

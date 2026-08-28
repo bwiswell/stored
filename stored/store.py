@@ -16,7 +16,7 @@ from ._time import parse_duration
 from .backends.base import StorageBackend
 from .errors import ConfigError, QueryError
 from .log import get_logger
-from .query import parse_window, plan
+from .query import TimeBound, parse_window, plan
 from .registry import Stream, StreamRegistry
 from .row import build_row, rehydrate
 from .ttl import Reaper
@@ -167,8 +167,8 @@ class Store:
         cls: type[s.Seared],
         *,
         key: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
         limit: int | None = None,
         order: str = 'asc',
         **filters: Any,
@@ -178,8 +178,9 @@ class Store:
         Args:
             cls: The registered message class.
             key: Topic key to match (``None`` matches all; ``*`` globs).
-            since: Lower time bound (ISO-8601 or relative, e.g. ``'-1h'``).
-            until: Upper time bound (ISO-8601 or relative).
+            since: Lower time bound — ISO-8601, relative (``'-1h'``), unix seconds,
+                a ``datetime``, or ``None``.
+            until: Upper time bound (same forms).
             limit: Maximum rows (defaults + clamps per the query planner).
             order: ``'asc'`` or ``'desc'`` by time.
             **filters: Equality filters on indexed field dimensions.

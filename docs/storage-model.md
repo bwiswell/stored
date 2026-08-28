@@ -48,6 +48,14 @@ historian needs. Streams with no `time_field` are unchanged: `_event_at` is `NUL
 and everything keys on `_issued_at` exactly as before. (A single field, no fallback
 chain — deliberate; revisit only if a stream needs one.)
 
+Range queries meet this axis: `store.query(..., since=…, until=…)` bounds accept not
+only ISO / relative (`'-1h'`) strings but also **unix epoch seconds** and `datetime`
+objects — so a service maps a request's numeric `from_ts` / `to_ts` straight through,
+the same unix-seconds axis as `time_field`. `stored` provides these read primitives
+(`query` for ranges, `latest` for last-known); *serving* them over a mesh
+request/reply contract is the consumer's job (the pure-core split — `stored` stays
+`seared`-only and never learns the wire contracts).
+
 ## Type map (scalar fields)
 
 `Int→BIGINT`, `Float→DOUBLE`, `Bool→BOOLEAN`, `Str`/`Path`/`UUID`/`Enum→VARCHAR`,
