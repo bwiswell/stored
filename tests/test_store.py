@@ -113,6 +113,43 @@ def test_latest_returns_newest_per_key(tmp_path):
         store.close()
 
 
+def test_counts_reports_history_and_latest(tmp_path):
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+        now = datetime.datetime.now(datetime.UTC).timestamp()
+        store.record(Obs, Obs(id=1, observed_at=now - 10))
+        store.record(Obs, Obs(id=1, observed_at=now))  # 2 history rows, 1 latest entity
+        store.record(Obs, Obs(id=2, observed_at=now))
+        history, latest = store.counts(Obs)
+        assert history == 3
+        assert latest == 2  # distinct ids
+    finally:
+        store.close()
+
+
+def test_counts_zero_latest_without_projection(tmp_path):
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        store.register(Msg, index=('id',))
+        store.record(Msg, Msg(id=1))
+        assert store.counts(Msg) == (1, 0)
+    finally:
+        store.close()
+
+
+def test_prune_flushes_pending_writes_first(tmp_path):
+    # flush_secs=0 disables the timer, so the row stays buffered until prune flushes it.
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
+    try:
+        store.register(Obs, time_field='observed_at', retention='1d')
+        old = datetime.datetime.now(datetime.UTC).timestamp() - 10 * 365 * 86400
+        store.record(Obs, Obs(id=1, observed_at=old))  # buffered, not yet flushed
+        assert store.prune() == 1  # prune flushes first, then sweeps the stale row
+    finally:
+        store.close()
+
+
 def test_latest_without_projection_raises(tmp_path):
     store = Store(str(tmp_path / 'c.db'))
     try:
