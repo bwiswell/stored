@@ -107,11 +107,19 @@ def derive_columns(cls: type[s.Seared]) -> dict[str, str]:
     return columns
 
 
+def _snake(name: str) -> str:
+    """Snake-case a class name (``LocationStore`` -> ``location_store``)."""
+    return ''.join(f'_{c.lower()}' if c.isupper() else c for c in name).lstrip('_')
+
+
 def table_name(cls: type) -> str:
-    """Return the table name for ``cls`` (``'stream_<snake>'``)."""
-    name = cls.__name__
-    snake = ''.join(f'_{c.lower()}' if c.isupper() else c for c in name).lstrip('_')
-    return f'stream_{snake}'
+    """Return the history table name for ``cls`` (``'stream_<snake>'``)."""
+    return f'stream_{_snake(cls.__name__)}'
+
+
+def latest_table_name(cls: type) -> str:
+    """Return the latest-projection table name for ``cls`` (``'latest_<snake>'``)."""
+    return f'latest_{_snake(cls.__name__)}'
 
 
 __all__ = [
@@ -125,4 +133,5 @@ __all__ = [
     'column_type',
     'derive_columns',
     'table_name',
+    'latest_table_name',
 ]

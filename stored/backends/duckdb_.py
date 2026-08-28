@@ -108,6 +108,37 @@ class DuckDBBackend:
         except duckdb.Error as exc:
             raise BackendError(f'append_batch({table!r}) failed: {exc}') from exc
 
+    def upsert_latest(
+        self,
+        table: str,
+        rows: Sequence[dict[str, Any]],
+        key_columns: Sequence[str],
+        compare_column: str,
+    ) -> None:
+        """Upsert rows into ``table`` newest-wins on ``compare_column``.
+
+        ``INSERT … ON CONFLICT(<key>) DO UPDATE … WHERE excluded.<cmp> >= <cmp>``.
+        One ``execute`` per row (order-independent newest-wins — an older row can
+        never overwrite a newer one) against the ``key_columns`` primary key.
+        """
+        if not rows:
+            return
+        cols = list(rows[0].keys())
+        col_list = ', '.join(f'"{col}"' for col in cols)
+        placeholders = ', '.join(['?'] * len(cols))
+        conflict = ', '.join(f'"{col}"' for col in key_columns)
+        assignments = ', '.join(f'"{col}" = excluded."{col}"' for col in cols if col not in key_columns)
+        sql = (
+            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '
+            f'ON CONFLICT ({conflict}) DO UPDATE SET {assignments} '
+            f'WHERE excluded."{compare_column}" >= "{table}"."{compare_column}"'
+        )
+        try:
+            for row in rows:
+                self._conn.execute(sql, [row.get(col) for col in cols])
+        except duckdb.Error as exc:
+            raise BackendError(f'upsert_latest({table!r}) failed: {exc}') from exc
+
     def select(
         self,
         sql: str,

@@ -51,8 +51,14 @@ def register_streams(store: Store, config: StoredConfig) -> None:
     """
     for spec in config.streams:
         cls = resolve_stream_class(spec)
+        latest = spec.latest
         store.register(
-            cls, retention=spec.retention, index=tuple(spec.index), time_field=spec.time_field,
+            cls,
+            retention=spec.retention,
+            index=tuple(spec.index),
+            time_field=spec.time_field,
+            latest_key=tuple(latest.key) if latest is not None else (),
+            latest_retention=latest.retention if latest is not None else None,
         )
 
 

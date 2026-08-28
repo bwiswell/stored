@@ -48,6 +48,28 @@ class StorageBackend(Protocol):
         """
         ...
 
+    def upsert_latest(
+        self,
+        table: str,
+        rows: Sequence[dict[str, Any]],
+        key_columns: Sequence[str],
+        compare_column: str,
+    ) -> None:
+        """Upsert ``rows`` into a latest-per-key ``table``, newest-wins.
+
+        One row per ``key_columns`` value; on conflict, overwrite only when the
+        incoming ``compare_column`` is **at least as new** as the stored one
+        (tolerating out-of-order / redelivered batches). ``table`` must have
+        ``key_columns`` as its primary key.
+
+        Args:
+            table: Target latest-projection table.
+            rows: Column-keyed row dicts (the same shape appended to history).
+            key_columns: The logical-entity key (the table's primary key).
+            compare_column: The temporal column compared for newest-wins.
+        """
+        ...
+
     def select(
         self,
         sql: str,

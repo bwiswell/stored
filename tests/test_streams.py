@@ -45,3 +45,22 @@ def test_register_streams_creates_table_and_retention(tmp_path):
         assert store.registry.get(StoredConfig).retention == '7d'
     finally:
         store.close()
+
+
+def test_register_streams_wires_latest_projection(tmp_path):
+    config = StoredConfig.load({
+        'identity': 'x',
+        'streams': [{
+            'cls': 'stored.config:StoredConfig',
+            'latest': {'key': ['identity'], 'retention': '30d'},
+        }],
+    })
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        register_streams(store, config)
+        stream = store.registry.get(StoredConfig)
+        assert stream.has_latest
+        assert stream.latest_key == ('identity',)
+        assert stream.latest_retention == '30d'
+    finally:
+        store.close()

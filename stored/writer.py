@@ -37,7 +37,7 @@ class Writer:
 
     __slots__ = (
         '_backend', '_flush_rows', '_flush_secs', '_buffers',
-        '_buffer_lock', '_backend_lock', '_stop', '_thread',
+        '_buffer_lock', '_backend_lock', '_stop', '_thread', '_latest',
     )
 
     def __init__(
@@ -52,6 +52,9 @@ class Writer:
         self._flush_rows = flush_rows
         self._flush_secs = flush_secs
         self._buffers: dict[str, list[dict[str, Any]]] = {}
+        # history table -> (latest_table, key_columns, compare_column) for streams
+        # that maintain a latest-per-key projection off the same batch.
+        self._latest: dict[str, tuple[str, tuple[str, ...], str]] = {}
         self._buffer_lock = threading.Lock()
         self._backend_lock = backend_lock if backend_lock is not None else threading.RLock()
         self._stop = threading.Event()
@@ -72,6 +75,20 @@ class Writer:
                 self.flush()
             except Exception:
                 _log.exception('periodic flush failed')
+
+    def register_latest(
+        self,
+        table: str,
+        latest_table: str,
+        key_columns: tuple[str, ...],
+        compare_column: str,
+    ) -> None:
+        """Maintain a latest-per-key projection of ``table`` into ``latest_table``.
+
+        On every flush, each history batch is also upserted (newest-wins on
+        ``compare_column``) into ``latest_table``, keyed by ``key_columns``.
+        """
+        self._latest[table] = (latest_table, key_columns, compare_column)
 
     def enqueue(self, table: str, row: dict[str, Any]) -> None:
         """Buffer ``row`` for ``table``, flushing if the row threshold is hit."""
@@ -97,6 +114,10 @@ class Writer:
                     continue
                 try:
                     self._backend.append_batch(table, rows)
+                    latest = self._latest.get(table)
+                    if latest is not None:
+                        latest_table, key_columns, compare_column = latest
+                        self._backend.upsert_latest(latest_table, rows, key_columns, compare_column)
                 except Exception:
                     _log.exception('flush of %d rows to %s failed (dropped)', len(rows), table)
 

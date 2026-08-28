@@ -74,6 +74,28 @@ def test_prune_keys_on_event_time_not_delivery_time(tmp_path):
         store.close()
 
 
+def test_latest_survives_history_expiry_on_longer_horizon(tmp_path):
+    # The whole point of the latest projection: a tag's last-known position outlives
+    # its history rows. An observation 8 days old is pruned from history (1d) but kept
+    # in the latest index (30d).
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
+    try:
+        store.register(
+            Obs, retention='1d', time_field='observed_at',
+            latest_key=('id',), latest_retention='30d',
+        )
+        now = datetime.datetime.now(datetime.UTC)
+        event = (now - datetime.timedelta(days=8)).timestamp()
+        store.record(Obs, Obs(id=1, observed_at=event), meta=Meta('k1', 't1', now))
+        store.flush()
+
+        assert store.prune() == 1  # the history row (older than 1d) is pruned...
+        assert store.query(Obs) == []
+        assert store.latest(Obs, id=1) is not None  # ...but last-known survives (within 30d)
+    finally:
+        store.close()
+
+
 def test_invalid_retention_raises(tmp_path):
     store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
     try:

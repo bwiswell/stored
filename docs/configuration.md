@@ -59,6 +59,10 @@ index = ["reader_id"]
 cls = "rio_protocol.messages:Location"
 retention = "48h"
 time_field = "observed_at"   # prune/range by domain event time, not mesh delivery time
+
+  [streams.latest]           # keep a newest-per-key projection (durable last-known)
+  key = ["source", "epc"]    # the logical entity key
+  retention = "30d"          # outlives the 48h history
 ```
 
 Load precedence: `stored -c <file>` reads the TOML; otherwise config comes from

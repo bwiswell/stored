@@ -20,6 +20,20 @@ def _split_csv(value: str) -> list[str]:
 
 
 @s.seared
+class LatestSpec(s.Seared):
+    """A stream's latest-per-key projection (durable last-known state).
+
+    Attributes:
+        key: Field names forming the logical-entity key (e.g. ``['source', 'epc']``).
+        retention: Retention horizon for the projection (usually longer than the
+            stream's history ``retention``); ``None`` keeps it forever.
+    """
+
+    key:       list       = s.Str(many=True, default_factory=list)
+    retention: str | None = s.Str(default=None)
+
+
+@s.seared
 class StreamSpec(s.Seared):
     """One recorded stream: a message class plus its retention policy.
 
@@ -33,13 +47,15 @@ class StreamSpec(s.Seared):
         time_field: A payload field naming the domain event time — retention and
             range queries key off it instead of the mesh delivery time. ``None``
             keeps the default (mesh ``_issued_at``).
+        latest: A latest-per-key projection, or ``None`` for history only.
     """
 
-    cls:        str        = s.Str(required=True)
-    retention:  str | None = s.Str(default=None)
-    archive:    str | None = s.Str(default=None)
-    index:      list       = s.Str(many=True, default_factory=list)
-    time_field: str | None = s.Str(default=None)
+    cls:        str               = s.Str(required=True)
+    retention:  str | None        = s.Str(default=None)
+    archive:    str | None        = s.Str(default=None)
+    index:      list              = s.Str(many=True, default_factory=list)
+    time_field: str | None        = s.Str(default=None)
+    latest:     LatestSpec | None = s.T(LatestSpec, default=None)
 
 
 @s.seared
@@ -104,4 +120,4 @@ class StoredConfig(s.Seared):
         return cls.load(data)
 
 
-__all__ = ['StoredConfig', 'StreamSpec']
+__all__ = ['StoredConfig', 'StreamSpec', 'LatestSpec']

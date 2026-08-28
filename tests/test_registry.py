@@ -68,3 +68,20 @@ def test_time_field_unknown_raises():
 def test_time_field_non_temporal_raises():
     with pytest.raises(RegistrationError):
         StreamRegistry().add(Obs, time_field='label')
+
+
+def test_default_has_no_latest_projection():
+    assert not StreamRegistry().add(Msg).has_latest
+
+
+def test_latest_key_sets_projection():
+    stream = StreamRegistry().add(Obs, latest_key=('id',), latest_retention='30d')
+    assert stream.has_latest
+    assert stream.latest_key == ('id',)
+    assert stream.latest_retention == '30d'
+    assert stream.latest_table == 'latest_obs'
+
+
+def test_latest_key_unknown_field_raises():
+    with pytest.raises(RegistrationError):
+        StreamRegistry().add(Obs, latest_key=('nope',))

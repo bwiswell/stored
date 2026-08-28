@@ -14,6 +14,12 @@ history layer beneath [`zeared`](https://github.com/bwiswell/zeared)'s last-valu
 - **Query history transparently.** Mesh consumers use the *existing*
   `Cls.query(params={'from': …, 'to': …})` getter — `stored` answers with
   historical, properly-typed instances over a queryable.
+- **Last-known, not just history.** Register a `latest_key` and `stored` keeps a
+  newest-per-entity projection alongside the log — a durable "last value however
+  old," on its own longer retention, read with `store.latest(cls, **key)`.
+- **Event-time aware.** Point a stream at a payload timestamp (`time_field`) and
+  retention, range queries, and last-known key off **when it happened**, not when
+  the mesh delivered it.
 - **Bounded by design.** Per-stream **TTL** expiry now; compressed **Parquet
   archival** of cold data on the roadmap.
 - **Lean, layered deps.** The core needs only `seared` (persistence rides stdlib
@@ -42,10 +48,11 @@ Requires Python ≥ 3.14.
 import stored
 
 store = stored.Store('chronicle.db')
-store.register(Telemetry, retention='7d', index=('id',))
+store.register(Telemetry, retention='7d', index=('id',), latest_key=('id',))
 
 store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
 history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → [Telemetry, …]
+newest  = store.latest(Telemetry, id=7)                  # → last value for id 7, however old
 
 store.flush(); store.prune(); store.close()
 ```
@@ -106,7 +113,8 @@ tests need no transport and no extra.
 ## Status
 
 The v1 core is functional: SQLite-backed persistence (stdlib; DuckDB an optional
-backend), a batched writer, TTL pruning, the Zenoh chronicler (record + serve
-history), and a runnable daemon. Deferred: the Postgres backend, a generic
-`HistoryQuery` contract, complex-field column promotion, and the cold-archival
-tiers.
+backend), a batched writer, event-time keying (`time_field`), latest-per-key
+projections (`latest_key` / `store.latest`), TTL pruning, the Zenoh chronicler
+(record + serve history), and a runnable daemon. Deferred: the Postgres backend, a
+generic `HistoryQuery` contract, complex-field column promotion, and the
+cold-archival tiers.

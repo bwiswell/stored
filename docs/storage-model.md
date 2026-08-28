@@ -65,6 +65,40 @@ so they still bind and read back as native `datetime`/`date`/`time`/`Decimal`.
 (`many` / `keyed`), arrays/frames (`NDArray`, `PandasFrame`, `PolarsFrame`) —
 have no column; they round-trip through `_payload` only.
 
+## Latest projection (`latest_key`)
+
+A stream is an append log — every sample kept until retention. Some consumers want
+the opposite: the **single newest value per logical entity**, however old — a tag's
+last-known position, a device's last state. Register a `latest_key` and `stored`
+maintains a second table, `latest_<snake>`, alongside the history:
+
+```python
+store.register(
+    Location, retention='7d', time_field='observed_at',
+    latest_key=('source', 'epc'), latest_retention='30d',
+)
+last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | None
+```
+
+- **One row per key.** `latest_<snake>` has the *same columns* as the history table
+  (so a latest row rehydrates to the full instance via `_payload`), but its primary
+  key is `latest_key` — the logical entity, not `(_key_expr, _ts_hlc)`.
+- **Newest-wins, order-independent.** On each flush the same batch that appends to
+  history is upserted into the projection, overwriting a key only when the incoming
+  row's temporal axis (`time_column`) is **≥** the stored one — so a late or
+  redelivered older sample never clobbers a newer last-known.
+- **Its own, longer retention.** `latest_retention` expires the projection
+  separately from the history `retention` — the last-known **survives** history
+  expiry (a 30-day last-position over a 7-day history). `None` keeps it forever.
+- **`store.latest(cls, **key)`** flushes pending writes, then returns the decoded
+  instance for the full key (or `None`). `latest_key` names must be scalar-column
+  fields, checked at registration.
+
+This is `stored`'s answer to a durable "last-known" query without retaining one mesh
+key per entity — the historian pattern behind e.g. a location store's
+`LastKnownLocation`. Serving that over a mesh contract stays the consumer's job;
+`stored` provides the read primitive.
+
 ## Schema evolution
 
 `register` runs the backend's additive `ensure_table`: new fields become new

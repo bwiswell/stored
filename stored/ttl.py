@@ -30,19 +30,32 @@ class Reaper:
         self._registry = registry
 
     def sweep_stream(self, stream: Stream) -> int:
-        """Expire rows for one ``stream``; return the count deleted.
+        """Expire rows for one ``stream`` (history + latest projection); total deleted.
 
-        A stream with no retention horizon is skipped (returns 0).
+        The append history expires on ``retention``; a latest-per-key projection
+        expires on its own (usually longer) ``latest_retention``. Both key off the
+        stream's temporal axis (``time_column``). Horizons left ``None`` are skipped.
         """
-        if stream.retention is None:
-            return 0
-        cutoff = utcnow() - parse_duration(stream.retention)
-        removed = self._backend.delete_before(stream.table, stream.time_column, cutoff)
-        if removed:
-            _log.info(
-                'pruned %d rows from %s (retention=%s, by=%s)',
-                removed, stream.table, stream.retention, stream.time_column,
-            )
+        now = utcnow()
+        removed = 0
+        if stream.retention is not None:
+            cutoff = now - parse_duration(stream.retention)
+            history = self._backend.delete_before(stream.table, stream.time_column, cutoff)
+            if history:
+                _log.info(
+                    'pruned %d rows from %s (retention=%s, by=%s)',
+                    history, stream.table, stream.retention, stream.time_column,
+                )
+            removed += history
+        if stream.has_latest and stream.latest_retention is not None:
+            cutoff = now - parse_duration(stream.latest_retention)
+            latest = self._backend.delete_before(stream.latest_table, stream.time_column, cutoff)
+            if latest:
+                _log.info(
+                    'pruned %d rows from %s (latest_retention=%s, by=%s)',
+                    latest, stream.latest_table, stream.latest_retention, stream.time_column,
+                )
+            removed += latest
         return removed
 
     def sweep(self) -> int:
