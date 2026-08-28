@@ -1,24 +1,25 @@
 # stored — docs
 
-Lean, source-tracking docs (seared/zeared style). One page per area as the
-package grows.
+`stored` is a database-wrapping **persistence layer for `seared` objects**, with
+a first-class (but optional) **Zenoh chronicler** built on `zeared`. It is the
+durable, time-keyed history layer beneath `zeared`'s last-value retention.
 
-## Design
+- **[architecture.md](architecture.md)** — the three layers, the ingest and
+  query paths, timestamps, and concurrency.
+- **[storage-model.md](storage-model.md)** — how a message becomes a row: the
+  type map, meta columns, the payload, dedup, TTL, and the archival roadmap.
+- **[chronicler.md](chronicler.md)** — the `stored.zenoh` layer: recording a
+  mesh, serving history transparently, the daemon, CLI, and systemd unit.
+- **[configuration.md](configuration.md)** — `StoredConfig` / `StreamSpec`, from
+  the environment or TOML.
 
-The authoritative design lives in the workspace plan doc:
-`~/stored/project-plans/01-architecture-and-scaffold.md` — what `stored` is, the
-`seared` / `zeared` layering, the storage/ingest/query design, TTL + the
-archival roadmap, and the milestone plan.
-
-## Layout
-
-- `stored/` — seared-only core: `store`, `registry`, `schema`, `row`, `writer`,
-  `query`, `ttl`, `config`, `backends/`.
-- `stored/zenoh/` — optional chronicler (`stored[zenoh]`): `chronicler`,
-  `serve`, `session`, `daemon`.
-- `systemd/stored.service` — production unit template.
+The authoritative design rationale lives in the workspace plan doc,
+`~/stored/project-plans/01-architecture-and-scaffold.md`.
 
 ## Status
 
-M0 scaffold: the package imports and the public surface is stubbed. Storage,
-ingest, and query land across M1–M4 (see the plan doc's build order).
+The v1 core is functional: persist and query `seared` objects (DuckDB backend),
+a batched writer, TTL pruning, the Zenoh chronicler (record + serve history),
+and a runnable daemon. Deferred: the Postgres backend, a generic `HistoryQuery`
+contract, complex-field column promotion, and the cold-archival tiers (see the
+plan doc).

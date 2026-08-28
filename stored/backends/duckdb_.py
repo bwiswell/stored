@@ -17,6 +17,10 @@ from ..log import get_logger
 
 _log = get_logger('backends.duckdb')
 
+# Rows per INSERT statement. A single multi-row INSERT is orders of magnitude
+# faster than per-row executemany on DuckDB; chunking bounds statement size.
+_CHUNK = 1000
+
 
 class DuckDBBackend:
     """A :class:`~stored.backends.base.StorageBackend` over a DuckDB file.
@@ -26,10 +30,11 @@ class DuckDBBackend:
             ephemeral store).
     """
 
-    __slots__ = ('_path', '_conn')
+    __slots__ = ('_path', '_conn', '_pks')
 
     def __init__(self, path: str = 'chronicle.duckdb') -> None:
         self._path = path
+        self._pks: dict[str, tuple[str, ...]] = {}
         try:
             self._conn = duckdb.connect(path)
         except duckdb.Error as exc:  # pragma: no cover - env-specific
@@ -65,25 +70,41 @@ class DuckDBBackend:
                     self._conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {ctype}')
         except duckdb.Error as exc:
             raise BackendError(f'ensure_table({table!r}) failed: {exc}') from exc
+        self._pks[table] = tuple(primary_key)
 
     def append_batch(
         self,
         table: str,
         rows: Sequence[dict[str, Any]],
     ) -> None:
-        """Insert ``rows`` in one call, ignoring primary-key conflicts."""
+        """Insert ``rows`` via chunked multi-row INSERTs, ignoring PK conflicts.
+
+        Rows are de-duplicated by primary key within the batch (keeping the last
+        occurrence) so a single multi-row INSERT never self-conflicts;
+        ``ON CONFLICT DO NOTHING`` then handles conflicts with existing rows.
+        """
         if not rows:
             return
+        pk = self._pks.get(table)
+        if pk:
+            deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
+            for row in rows:
+                deduped[tuple(row.get(col) for col in pk)] = row
+            rows = list(deduped.values())
+
         cols = list(rows[0].keys())
         col_list = ', '.join(f'"{col}"' for col in cols)
-        placeholders = ', '.join(['?'] * len(cols))
-        sql = (
-            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '
-            f'ON CONFLICT DO NOTHING'
-        )
-        params = [[row.get(col) for col in cols] for row in rows]
+        row_ph = '(' + ', '.join(['?'] * len(cols)) + ')'
         try:
-            self._conn.executemany(sql, params)
+            for start in range(0, len(rows), _CHUNK):
+                chunk = rows[start:start + _CHUNK]
+                values = ', '.join([row_ph] * len(chunk))
+                sql = (
+                    f'INSERT INTO "{table}" ({col_list}) VALUES {values} '
+                    f'ON CONFLICT DO NOTHING'
+                )
+                params = [row.get(col) for row in chunk for col in cols]
+                self._conn.execute(sql, params)
         except duckdb.Error as exc:
             raise BackendError(f'append_batch({table!r}) failed: {exc}') from exc
 

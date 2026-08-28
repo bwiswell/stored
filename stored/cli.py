@@ -59,8 +59,23 @@ def _cmd_prune(args: argparse.Namespace) -> int:
 
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
-    """Reconcile stream tables to their classes' current schemas."""
-    raise NotImplementedError('stored migrate lands with schema evolution (M1+)')
+    """Create/reconcile stream tables to their classes' current schemas.
+
+    Registration runs the backend's additive ``ensure_table`` (new columns are
+    added; destructive changes remain a manual step).
+    """
+    cfg = _load_config(args.config)
+    from .store import Store
+    from .zenoh.daemon import register_streams
+
+    store = Store(cfg.db_path, backend=cfg.backend)
+    try:
+        register_streams(store, cfg)
+        tables = [stream.table for stream in store.registry.all()]
+    finally:
+        store.close()
+    print(f'reconciled {len(tables)} table(s): {", ".join(tables) or "(none)"}')  # noqa: T201
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:

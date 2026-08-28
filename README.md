@@ -3,12 +3,8 @@
 `stored` is a small, database-wrapping **persistence layer for `seared`
 objects**, with a first-class (but optional) **Zenoh chronicler** built on
 [`zeared`](https://github.com/bwiswell/zeared). It is the durable, time-keyed
-history layer beneath `zeared`'s last-value **retention** — the sister that
-remembers.
-
-> **Status: pre-alpha (M0 scaffold).** The package imports and the public
-> surface is stubbed; storage, ingest, and query are landing milestone by
-> milestone (see `project-plans/`).
+history layer beneath [`zeared`](https://github.com/bwiswell/zeared)'s last-value
+**retention** — the sister that remembers.
 
 ## Why `stored`
 
@@ -36,37 +32,75 @@ uv add "stored[zenoh] @ git+https://github.com/bwiswell/stored"
 
 Requires Python ≥ 3.14.
 
-## Quick start (target API)
+## Core: persist & query seared objects
 
 ```python
 import stored
 
-store = stored.Store(path='chronicle.duckdb')
+store = stored.Store('chronicle.duckdb')
 store.register(Telemetry, retention='7d', index=('id',))
 
-# core persistence
-store.record(Telemetry, msg, meta=meta)
-rows = store.query(Telemetry, id='42', since='-1h', limit=5000)
+store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
+history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → [Telemetry, …]
 
-# mesh chronicler (needs stored[zenoh])
-import stored.zenoh as sz
-chronicler = sz.Chronicler(store, session=sess)
-chronicler.add(Telemetry)
+store.flush(); store.prune(); store.close()
+```
+
+`record` buffers through a batched writer; `query` flushes first, so reads
+always see prior writes.
+
+## Mesh: the chronicler (needs `stored[zenoh]`)
+
+```python
+import zeared as z
+import stored, stored.zenoh as sz
+
+session = z.peer()                          # timestamped session
+store = stored.Store('chronicle.duckdb')
+chronicler = sz.Chronicler(store, session)
+chronicler.add(Telemetry, retention='7d')   # subscribe + serve history
 chronicler.run()
 ```
 
-## Architecture
+Consumers then retrieve history with the ordinary `zeared` getter:
 
-Three concentric layers — `seared`-only core, optional `zeared` chronicler,
-pluggable storage backend (DuckDB first). See
-[`project-plans/01-architecture-and-scaffold.md`](project-plans/01-architecture-and-scaffold.md)
-for the full design.
+```python
+history = Telemetry.query(id=7, params={'from': '-1h', 'limit': '5000'})
+```
+
+## Daemon
+
+```sh
+stored -c stored.toml validate-config
+stored -c stored.toml run                   # systemd Type=notify service
+stored -c stored.toml migrate               # create/reconcile tables
+stored -c stored.toml prune                 # force a TTL sweep
+```
+
+See `systemd/stored.service` for the unit template.
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) — the three layers, ingest/query
+  paths, timestamps, concurrency.
+- [docs/storage-model.md](docs/storage-model.md) — row shape, type map, dedup,
+  TTL, archival roadmap.
+- [docs/chronicler.md](docs/chronicler.md) — the `stored.zenoh` layer + daemon.
+- [docs/configuration.md](docs/configuration.md) — `StoredConfig` / `StreamSpec`.
 
 ## Development
 
 ```sh
-uv sync
+uv sync --extra zenoh
 uv run pytest tests/
 ```
 
-Tests mirror the source layout, one `test_*.py` per source area.
+Tests mirror the source layout. The mesh tests spin up a loopback Zenoh peer;
+the core tests need no transport.
+
+## Status
+
+The v1 core is functional: DuckDB-backed persistence, a batched writer, TTL
+pruning, the Zenoh chronicler (record + serve history), and a runnable daemon.
+Deferred: the Postgres backend, a generic `HistoryQuery` contract,
+complex-field column promotion, and the cold-archival tiers.

@@ -47,11 +47,12 @@ asyncio_mode = "auto"
 
 [tool.ty.src]
 # ty checks all source modules; tests build instances via **kwargs / .load(dict)
-# that ty can't introspect, so only they are excluded.
-exclude = ["tests"]
+# that ty can't introspect, and bench/ is a throwaway script — both excluded.
+exclude = ["tests", "bench"]
 
 [tool.ruff]
 line-length = 120
+extend-exclude = ["bench"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "D"]
@@ -66,6 +67,9 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
+
+[tool.deptry]
+extend_exclude = ["bench"]
 
 [tool.deptry.per_rule_ignores]
 # ``zeared`` is an optional-extra dep used only by the guarded ``stored.zenoh``
