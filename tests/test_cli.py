@@ -1,4 +1,4 @@
-import duckdb
+import sqlite3
 
 from stored.cli import main
 
@@ -11,18 +11,21 @@ def test_validate_config(tmp_path, capsys):
 
 
 def test_migrate_creates_tables(tmp_path, capsys):
-    db = tmp_path / 'c.duckdb'
+    # A plain seared class as the stream, so ``migrate`` is exercised on the pure
+    # SQLite core with no ``zenoh`` extra installed (the CLI storage verbs must not
+    # require a mesh). Any @s.seared class works — the store records seared objects.
+    db = tmp_path / 'c.db'
     toml = tmp_path / 'c.toml'
     toml.write_text(
         'identity = "x"\n'
         f'db_path = "{db}"\n'
         '[[streams]]\n'
-        'cls = "_support_messages:Beacon"\n',
+        'cls = "stored.config:StoredConfig"\n',
     )
     assert main(['-c', str(toml), 'migrate']) == 0
-    assert 'stream_beacon' in capsys.readouterr().out
+    assert 'stream_stored_config' in capsys.readouterr().out
 
-    conn = duckdb.connect(str(db))
-    names = [r[0] for r in conn.execute('select table_name from information_schema.tables').fetchall()]
+    conn = sqlite3.connect(str(db))
+    names = [r[0] for r in conn.execute("select name from sqlite_master where type='table'").fetchall()]
     conn.close()
-    assert 'stream_beacon' in names
+    assert 'stream_stored_config' in names

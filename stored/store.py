@@ -14,10 +14,9 @@ import seared as s
 from . import schema
 from ._time import parse_duration
 from .backends.base import StorageBackend
-from .backends.duckdb_ import DuckDBBackend
-from .errors import ConfigError
+from .errors import ConfigError, QueryError
 from .log import get_logger
-from .query import parse_window, plan
+from .query import TimeBound, parse_window, plan
 from .registry import Stream, StreamRegistry
 from .row import build_row, rehydrate
 from .ttl import Reaper
@@ -27,10 +26,20 @@ _log = get_logger('store')
 
 
 def _make_backend(backend: str, path: str) -> StorageBackend:
-    """Construct the named storage backend."""
+    """Construct the named storage backend (imported lazily, so the core stays dep-light).
+
+    The default ``sqlite`` backend is stdlib-only; ``duckdb`` needs the ``stored[duckdb]``
+    extra and is imported only when requested.
+    """
+    if backend == 'sqlite':
+        from .backends.sqlite_ import SQLiteBackend
+
+        return SQLiteBackend(path)
     if backend == 'duckdb':
+        from .backends.duckdb_ import DuckDBBackend
+
         return DuckDBBackend(path)
-    raise ConfigError(f'unknown backend {backend!r} (expected one of: duckdb)')
+    raise ConfigError(f'unknown backend {backend!r} (expected one of: sqlite, duckdb)')
 
 
 class Store:
@@ -42,7 +51,8 @@ class Store:
 
     Args:
         path: Path to the backing database file.
-        backend: Backend name (``'duckdb'``; ``'postgres'`` later).
+        backend: Backend name (``'sqlite'`` default; ``'duckdb'`` via the extra;
+            ``'postgres'`` later).
         flush_rows: Writer flush threshold in buffered rows.
         flush_secs: Writer flush interval in seconds (``0`` disables the timer).
     """
@@ -51,9 +61,9 @@ class Store:
 
     def __init__(
         self,
-        path: str = 'chronicle.duckdb',
+        path: str = 'chronicle.db',
         *,
-        backend: str = 'duckdb',
+        backend: str = 'sqlite',
         flush_rows: int = 1000,
         flush_secs: float = 1.0,
     ) -> None:
@@ -86,29 +96,51 @@ class Store:
         retention: str | None = None,
         archive: str | None = None,
         index: tuple[str, ...] = (),
+        time_field: str | None = None,
+        latest_key: tuple[str, ...] = (),
+        latest_retention: str | None = None,
     ) -> Stream:
-        """Register a message class as a recorded stream and create its table.
+        """Register a message class as a recorded stream and create its table(s).
 
         Args:
             cls: A ``@s.seared`` / ``@z.zeared`` message class.
             retention: Retention horizon (e.g. ``'7d'``), or ``None``.
             archive: Cold-archival horizon (roadmap), or ``None``.
             index: Extra field names to index as queryable dimensions.
+            time_field: A payload field naming the **domain event time** — retention
+                and range queries key off it instead of the mesh delivery time.
+            latest_key: Field names forming a **latest-per-key** projection's logical
+                key (e.g. ``('source', 'epc')``). When set, a ``latest_<name>`` table
+                keeps one newest-wins row per key, read via :meth:`latest`.
+            latest_retention: Retention horizon for the latest projection (usually
+                longer than ``retention``), or ``None`` to keep forever.
 
         Returns:
             The registered :class:`Stream`.
 
         Raises:
-            ConfigError: If ``retention`` is not a valid duration.
+            ConfigError: If ``retention`` / ``latest_retention`` is not a valid duration.
+            RegistrationError: If ``time_field`` / ``latest_key`` name unsuitable fields.
         """
-        if retention is not None:
-            try:
-                parse_duration(retention)
-            except ValueError as exc:
-                raise ConfigError(f'invalid retention {retention!r}: {exc}') from exc
-        stream = self._registry.add(cls, retention=retention, archive=archive, index=index)
+        for horizon in (retention, latest_retention):
+            if horizon is not None:
+                try:
+                    parse_duration(horizon)
+                except ValueError as exc:
+                    raise ConfigError(f'invalid retention {horizon!r}: {exc}') from exc
+        stream = self._registry.add(
+            cls, retention=retention, archive=archive, index=index, time_field=time_field,
+            latest_key=latest_key, latest_retention=latest_retention,
+        )
+        columns = schema.derive_columns(cls)
         with self._lock:
-            self._backend.ensure_table(stream.table, schema.derive_columns(cls), schema.PRIMARY_KEY)
+            self._backend.ensure_table(stream.table, columns, schema.PRIMARY_KEY)
+            if stream.has_latest:
+                self._backend.ensure_table(stream.latest_table, columns, stream.latest_key)
+        if stream.has_latest:
+            self._writer.register_latest(
+                stream.table, stream.latest_table, stream.latest_key, stream.time_column,
+            )
         return stream
 
     def record(
@@ -135,8 +167,8 @@ class Store:
         cls: type[s.Seared],
         *,
         key: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
         limit: int | None = None,
         order: str = 'asc',
         **filters: Any,
@@ -146,8 +178,9 @@ class Store:
         Args:
             cls: The registered message class.
             key: Topic key to match (``None`` matches all; ``*`` globs).
-            since: Lower time bound (ISO-8601 or relative, e.g. ``'-1h'``).
-            until: Upper time bound (ISO-8601 or relative).
+            since: Lower time bound — ISO-8601, relative (``'-1h'``), unix seconds,
+                a ``datetime``, or ``None``.
+            until: Upper time bound (same forms).
             limit: Maximum rows (defaults + clamps per the query planner).
             order: ``'asc'`` or ``'desc'`` by time.
             **filters: Equality filters on indexed field dimensions.
@@ -162,6 +195,40 @@ class Store:
         with self._lock:
             rows = self._backend.select(sql, params)
         return [rehydrate(stream, columns) for columns in rows]
+
+    def latest(self, cls: type[s.Seared], **key: Any) -> s.Seared | None:
+        """Return the newest-recorded instance for one logical-entity ``key``.
+
+        Reads the stream's latest-per-key projection (see ``latest_key`` on
+        :meth:`register`): the last value for ``key`` **however old**, surviving
+        history expiry — a tag's last-known position, a device's last state.
+        Flushes pending writes first (read-your-writes).
+
+        Args:
+            cls: A registered class with a latest projection.
+            **key: The full logical key (every ``latest_key`` field, exactly).
+
+        Returns:
+            The decoded instance, or ``None`` when the key has no recorded value.
+
+        Raises:
+            ConfigError: If ``cls`` has no latest projection.
+            QueryError: If ``key`` does not name exactly the projection's key fields.
+        """
+        stream = self._registry.get(cls)
+        if not stream.has_latest:
+            raise ConfigError(f'{cls.__name__} has no latest projection (register with latest_key=…)')
+        if set(key) != set(stream.latest_key):
+            raise QueryError(
+                f'latest({cls.__name__}) needs exactly {list(stream.latest_key)}, got {sorted(key)}',
+            )
+        where = ' AND '.join(f'"{col}" = ?' for col in stream.latest_key)
+        sql = f'SELECT * FROM "{stream.latest_table}" WHERE {where} LIMIT 1'  # noqa: S608 (quoted identifiers)
+        params = [key[col] for col in stream.latest_key]
+        self._writer.flush()
+        with self._lock:
+            rows = self._backend.select(sql, params)
+        return rehydrate(stream, rows[0]) if rows else None
 
     def flush(self) -> None:
         """Flush buffered writes to the backend."""

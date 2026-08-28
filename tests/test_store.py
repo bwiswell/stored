@@ -1,12 +1,22 @@
+import datetime
+
+import pytest
 import seared as s
 
 from stored import Store
+from stored.errors import ConfigError, QueryError
 
 
 @s.seared
 class Msg(s.Seared):
     id:   int = s.Int(required=True)
     name: str = s.Str(default='')
+
+
+@s.seared
+class Obs(s.Seared):
+    id:          int   = s.Int(required=True)
+    observed_at: float = s.Float(required=True)
 
 
 class FixedMeta:
@@ -65,6 +75,60 @@ def test_query_limit_and_order(tmp_path):
             store.record(Msg, Msg(id=i))
         latest = store.query(Msg, order='desc', limit=2)
         assert [r.id for r in latest] == [4, 3]
+    finally:
+        store.close()
+
+
+def test_query_range_keys_on_event_time(tmp_path):
+    # Both rows are recorded *now*; only observed_at differs. A '-1h' window keyed
+    # on event time returns just the recent-by-event-time row (delivery time would
+    # match both).
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        store.register(Obs, index=('id',), time_field='observed_at')
+        now = datetime.datetime.now(datetime.UTC).timestamp()
+        store.record(Obs, Obs(id=1, observed_at=now - 7200))  # 2h ago
+        store.record(Obs, Obs(id=2, observed_at=now - 60))    # 1m ago
+
+        recent = store.query(Obs, since='-1h')
+        assert [r.id for r in recent] == [2]
+    finally:
+        store.close()
+
+
+def test_latest_returns_newest_per_key(tmp_path):
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+        now = datetime.datetime.now(datetime.UTC).timestamp()
+        store.record(Obs, Obs(id=1, observed_at=now - 100))
+        store.record(Obs, Obs(id=1, observed_at=now))        # newest for id=1
+        store.record(Obs, Obs(id=1, observed_at=now - 50))   # out of order, older -> ignored
+        store.record(Obs, Obs(id=2, observed_at=now - 10))
+
+        assert store.latest(Obs, id=1).observed_at == now
+        assert store.latest(Obs, id=2).observed_at == now - 10
+        assert store.latest(Obs, id=999) is None
+    finally:
+        store.close()
+
+
+def test_latest_without_projection_raises(tmp_path):
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        store.register(Obs)
+        with pytest.raises(ConfigError):
+            store.latest(Obs, id=1)
+    finally:
+        store.close()
+
+
+def test_latest_wrong_key_raises(tmp_path):
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        store.register(Obs, latest_key=('id',))
+        with pytest.raises(QueryError):
+            store.latest(Obs, observed_at=1.0)
     finally:
         store.close()
 

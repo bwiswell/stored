@@ -1,6 +1,10 @@
 import datetime
 
-from stored.backends.duckdb_ import DuckDBBackend
+import pytest
+
+pytest.importorskip('duckdb')  # the DuckDB backend is the optional ``stored[duckdb]`` extra
+
+from stored.backends.duckdb_ import DuckDBBackend  # noqa: E402
 
 
 def test_open_memory_and_close():
@@ -52,6 +56,33 @@ def test_ensure_table_adds_missing_column():
         backend.ensure_table('t', {**base, 'extra': 'BIGINT'}, pk)
         backend.append_batch('t', [{'_key_expr': 'k', '_ts_hlc': 'a', 'extra': 9}])
         assert backend.select('SELECT * FROM "t"')[0]['extra'] == 9
+    finally:
+        backend.close()
+
+
+def test_upsert_latest_keeps_newest():
+    backend = DuckDBBackend(':memory:')
+    try:
+        cols = {'source': 'VARCHAR', 'epc': 'VARCHAR', 'x': 'DOUBLE', '_event_at': 'TIMESTAMP'}
+        backend.ensure_table('latest_t', cols, ('source', 'epc'))
+        key, cmp = ('source', 'epc'), '_event_at'
+        backend.upsert_latest('latest_t', [
+            {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': datetime.datetime(2026, 1, 1)},
+            {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': datetime.datetime(2026, 3, 1)},  # newest
+            {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': datetime.datetime(2026, 2, 1)},  # out of order
+        ], key, cmp)
+        rows = backend.select('SELECT * FROM "latest_t"')
+        assert len(rows) == 1
+        assert rows[0]['x'] == 3.0
+
+        def put(x, month):
+            row = {'source': 'rtls', 'epc': 'A', 'x': x, '_event_at': datetime.datetime(2026, month, 1)}
+            backend.upsert_latest('latest_t', [row], key, cmp)
+
+        put(9.0, 2)  # older observation in a later call is ignored
+        assert backend.select('SELECT x FROM "latest_t"')[0]['x'] == 3.0
+        put(7.0, 4)  # newer one wins
+        assert backend.select('SELECT x FROM "latest_t"')[0]['x'] == 7.0
     finally:
         backend.close()
 

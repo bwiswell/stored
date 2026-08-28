@@ -18,7 +18,8 @@ The authoritative design rationale lives in the workspace plan doc,
 
 ## Status
 
-The v1 core is functional: persist and query `seared` objects (DuckDB backend),
+The v1 core is functional: persist and query `seared` objects (SQLite backend by
+default; DuckDB optional),
 a batched writer, TTL pruning, the Zenoh chronicler (record + serve history),
 and a runnable daemon. Deferred: the Postgres backend, a generic `HistoryQuery`
 contract, complex-field column promotion, and the cold-archival tiers (see the

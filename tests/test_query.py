@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 import seared as s
 
@@ -9,6 +11,12 @@ from stored.registry import StreamRegistry
 @s.seared
 class Msg(s.Seared):
     id: int = s.Int(required=True)
+
+
+@s.seared
+class Obs(s.Seared):
+    id:          int   = s.Int(required=True)
+    observed_at: float = s.Float(required=True)
 
 
 def _stream():
@@ -41,6 +49,17 @@ def test_parse_window_bad_time_raises():
         query.parse_window(since='not-a-time')
 
 
+def test_parse_window_unix_seconds_bound():
+    ts = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.UTC).timestamp()
+    window = query.parse_window(since=ts)
+    assert window.start == datetime.datetime(2026, 1, 1, 12, 0)  # naive UTC
+
+
+def test_parse_window_datetime_bound():
+    window = query.parse_window(until=datetime.datetime(2026, 3, 1, tzinfo=datetime.UTC))
+    assert window.end == datetime.datetime(2026, 3, 1)
+
+
 def test_plan_builds_sql_and_params():
     window = query.parse_window(since='-1h', limit=5)
     sql, params = query.plan(_stream(), 'robot/1', window, {'id': 3})
@@ -65,3 +84,17 @@ def test_plan_no_filters_no_where():
     sql, params = query.plan(_stream(), '', query.parse_window())
     assert 'WHERE' not in sql
     assert params == []
+
+
+def test_plan_default_keys_on_issued_at():
+    sql, _ = query.plan(_stream(), '', query.parse_window(since='-1h'))
+    assert '"_issued_at" >= ?' in sql
+    assert 'ORDER BY "_issued_at"' in sql
+
+
+def test_plan_time_field_stream_keys_on_event_at():
+    stream = StreamRegistry().add(Obs, index=('id',), time_field='observed_at')
+    sql, _ = query.plan(stream, '', query.parse_window(since='-1h'))
+    assert '"_event_at" >= ?' in sql
+    assert 'ORDER BY "_event_at"' in sql
+    assert '_issued_at' not in sql

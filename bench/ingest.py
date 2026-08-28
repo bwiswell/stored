@@ -22,7 +22,7 @@ class Sample(s.Seared):
 
 def bench(n: int) -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        store = stored.Store(str(Path(tmp) / "bench.duckdb"), flush_secs=0)
+        store = stored.Store(str(Path(tmp) / "bench.db"), flush_secs=0)
         try:
             store.register(Sample, index=("id",))
 

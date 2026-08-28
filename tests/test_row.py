@@ -12,6 +12,12 @@ class Msg(s.Seared):
     name: str = s.Str(default='')
 
 
+@s.seared
+class Obs(s.Seared):
+    id:          int   = s.Int(required=True)
+    observed_at: float = s.Float(required=True)
+
+
 class FakeMeta:
     key_expr = 'robot/1/telemetry'
     timestamp = 'abcd1234abcd1234/01'
@@ -56,3 +62,14 @@ def test_rehydrate_round_trips():
     back = rehydrate(stream, build_row(stream, Msg(id=42, name='z'), None))
     assert back.id == 42
     assert back.name == 'z'
+
+
+def test_event_at_is_none_without_time_field():
+    assert build_row(_stream(), Msg(id=1), None)['_event_at'] is None
+
+
+def test_event_at_from_unix_seconds_field():
+    stream = StreamRegistry().add(Obs, time_field='observed_at')
+    instant = datetime.datetime(2026, 3, 4, 5, 6, 7, tzinfo=datetime.UTC)
+    row = build_row(stream, Obs(id=1, observed_at=instant.timestamp()), None)
+    assert row['_event_at'] == instant.replace(tzinfo=None)

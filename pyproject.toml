@@ -8,7 +8,6 @@ authors = [
 requires-python = ">=3.14,<4.0"
 dependencies = [
     "seared>=0.2.1",
-    "duckdb>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -16,6 +15,10 @@ dependencies = [
 # transport-free: every zeared class is a seared class, so persistence never
 # needs zeared. ``eclipse-zenoh`` / ``msgpack`` arrive transitively via zeared.
 zenoh = ["zeared>=0.2.4"]
+# The DuckDB backend — an optional upgrade for analytical/aggregation queries
+# (workspace persistence doc 08 §5). The default backend is stdlib ``sqlite3``,
+# so ``stored``'s core install is just ``seared`` (the rio tiny-surface ethos).
+duckdb = ["duckdb>=1.1"]
 
 [dependency-groups]
 dev = [
@@ -72,6 +75,7 @@ convention = "google"
 extend_exclude = ["bench"]
 
 [tool.deptry.per_rule_ignores]
-# ``zeared`` is an optional-extra dep used only by the guarded ``stored.zenoh``
-# layer; ``pytest``/``pytest-asyncio`` are dev-only test deps.
-DEP001 = ["zeared"]
+# ``zeared`` (the ``stored.zenoh`` layer) and ``duckdb`` (the optional DuckDB
+# backend) are optional-extra deps imported only behind lazy guards;
+# ``pytest``/``pytest-asyncio`` are dev-only test deps.
+DEP001 = ["zeared", "duckdb"]

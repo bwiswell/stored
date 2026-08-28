@@ -167,16 +167,6 @@ class Daemon:
             self._store.close()
 
 
-def register_streams(store: Store, config: StoredConfig) -> None:
-    """Resolve and register every configured stream into ``store`` (no session).
-
-    Used by the ``prune`` CLI, which needs the tables/retention but not a mesh.
-    """
-    for spec in config.streams:
-        cls = _resolve(spec)
-        store.register(cls, retention=spec.retention, index=tuple(spec.index))
-
-
 def _install_signals(daemon: Daemon) -> None:
     """Route SIGTERM/SIGINT to ``daemon.stop`` (skipped off the main thread)."""
     def _handler(signum: int, _frame: Any) -> None:
@@ -211,4 +201,4 @@ def run(config: StoredConfig) -> int:
     return 0
 
 
-__all__ = ['Daemon', 'run', 'register_streams']
+__all__ = ['Daemon', 'run']

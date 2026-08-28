@@ -7,11 +7,11 @@ stored.zenoh  (optional extra: stored[zenoh] → zeared)
    Chronicler: on_message → record      |  on_query → serve history
    session (timestamped) · daemon · CLI
 ──────────────────────────────────────────────────────────────────
-stored  (core: seared + duckdb)
-   Store · StreamRegistry · schema · row · Writer · query · Reaper
+stored  (core: seared + stdlib sqlite3)
+   Store · StreamRegistry · schema · row · Writer · query · Reaper · streams
 ──────────────────────────────────────────────────────────────────
 StorageBackend
-   DuckDBBackend (v1)          [ PostgresBackend — later ]
+   SQLiteBackend (default)  ·  DuckDBBackend (stored[duckdb])  ·  [ Postgres — later ]
 ```
 
 The **core** knows only `seared` classes, tables, rows, and time — it never
@@ -40,8 +40,9 @@ Cls.on_message(record, ...)          [zeared subscriber, 2-arg callback]
   from the HLC timestamp), the raw `timestamp` (HLC string), `key_expr`,
   `source_info`, and `schema`. Timestamping must be enabled on the session
   (`stored.zenoh` opens it that way by default).
-- Writes are **batched** — DuckDB is columnar and dislikes per-row inserts. The
-  `Writer` flushes on a row-count threshold, on a periodic interval, and on
+- Writes are **batched** — a statement per message is wasteful (DuckDB is
+  columnar and dislikes per-row inserts; SQLite pays per-transaction overhead), so
+  the `Writer` flushes on a row-count threshold, on a periodic interval, and on
   close.
 - The `(_key_expr, _ts_hlc)` primary key makes redelivery an **idempotent**
   no-op (reconnect replays, at-least-once quirks).
@@ -69,19 +70,22 @@ the roadmap).
 
 ## Time
 
-Everything stored and queried is **naive UTC** (`TIMESTAMP` columns). DuckDB's
-Python client needs `pytz` to round-trip `TIMESTAMPTZ`; canonicalizing to naive
-UTC at the boundary sidesteps that dependency. `_issued_at` is the temporal
-source of truth for range queries; `_ts_hlc` is the dedup/ordering tiebreaker
-(HLC strings are lexicographically == temporally ordered). Records with no HLC
-stamp get a synthesized, unique, sortable `_ts_hlc` and fall back to receive
-time (`_ts_source = 'recv'`).
+Everything stored and queried is **naive UTC** (`TIMESTAMP` columns).
+Canonicalizing to naive UTC at the boundary keeps storage dependency-free across
+backends — DuckDB's client would otherwise need `pytz` for `TIMESTAMPTZ`, and the
+SQLite backend stores ISO-8601 text whose lexical order is chronological.
+`_issued_at` (the mesh delivery/issue time) is the default temporal axis for range
+queries and retention; a stream may instead key on its **domain event time** via a
+`time_field`, normalized into `_event_at` (see storage-model). `_ts_hlc` is the
+dedup/ordering tiebreaker (HLC strings are lexicographically == temporally ordered).
+Records with no HLC stamp get a synthesized, unique, sortable `_ts_hlc` and fall
+back to receive time (`_ts_source = 'recv'`).
 
 ## Concurrency
 
 A single `RLock` per `Store` serializes all backend I/O. The writer's periodic
 flush thread, the on-message ingest (Zenoh delivery thread), and on-query serves
-(Zenoh query thread) all funnel through it, so the single DuckDB connection is
+(Zenoh query thread) all funnel through it, so the single backend connection is
 never touched concurrently. A slow backend applies backpressure to the delivery
 thread (block semantics); a backend *error* drops the in-flight batch — the
 documented, bounded telemetry-loss envelope.

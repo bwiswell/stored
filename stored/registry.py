@@ -24,6 +24,13 @@ class Stream:
         retention: Retention horizon string (e.g. ``'7d'``), or ``None``.
         archive: Cold-archival horizon string (roadmap), or ``None``.
         index: Extra field names to index as queryable dimensions.
+        time_field: A payload field naming the **domain event time** — retention
+            and range queries key off it (via ``_event_at``) instead of the mesh
+            ``_issued_at``. ``None`` keeps the default (mesh delivery time).
+        latest_key: Field names forming the **logical entity key** of a latest-per-key
+            projection (e.g. ``('source', 'epc')``). Empty means no projection.
+        latest_retention: Retention horizon for the latest projection (usually longer
+            than ``retention``), or ``None`` to keep forever.
     """
 
     cls: type[s.Seared]
@@ -31,6 +38,65 @@ class Stream:
     retention: str | None = None
     archive: str | None = None
     index: tuple[str, ...] = field(default_factory=tuple)
+    time_field: str | None = None
+    latest_key: tuple[str, ...] = field(default_factory=tuple)
+    latest_retention: str | None = None
+
+    @property
+    def time_column(self) -> str:
+        """The temporal column this stream keys retention/queries off.
+
+        ``_event_at`` (the normalized domain event time) when a ``time_field`` is
+        set, else ``_issued_at`` (the mesh delivery/issue time).
+        """
+        return schema.EVENT_AT if self.time_field is not None else schema.ISSUED_AT
+
+    @property
+    def has_latest(self) -> bool:
+        """Whether this stream maintains a latest-per-key projection."""
+        return bool(self.latest_key)
+
+    @property
+    def latest_table(self) -> str:
+        """The backing table name for the latest projection (``latest_<snake>``)."""
+        return schema.latest_table_name(self.cls)
+
+
+def _validate_time_field(cls: type[s.Seared], time_field: str) -> None:
+    """Check ``time_field`` names a temporal (instant-bearing) field of ``cls``.
+
+    Raises:
+        RegistrationError: If the field is absent or not an ``Int``/``Float``/
+            ``DateTime``/``Date`` — kinds that carry an absolute instant.
+    """
+    for attr, _wire, fld in cls.__seared_fields__:
+        if attr == time_field:
+            kind = type(fld).__name__
+            if kind not in schema.TIME_FIELD_KINDS:
+                raise RegistrationError(
+                    f'time_field {time_field!r} of {cls.__name__} is a {kind} field; '
+                    f'expected one of {sorted(schema.TIME_FIELD_KINDS)}',
+                )
+            return
+    raise RegistrationError(f'time_field {time_field!r} is not a field of {cls.__name__}')
+
+
+def _validate_latest_key(cls: type[s.Seared], latest_key: tuple[str, ...]) -> None:
+    """Check every ``latest_key`` name is a scalar-column field of ``cls``.
+
+    The latest table's primary key is these columns, so each must project to a
+    real column (not a blob-routed complex field).
+
+    Raises:
+        RegistrationError: If a key name is not a scalar-column field of ``cls``.
+    """
+    columns = {attr for attr, _wire, fld in cls.__seared_fields__ if schema.column_type(fld) is not None}
+    for name in latest_key:
+        if name not in columns:
+            raise RegistrationError(
+                f'latest_key {name!r} is not a scalar field of {cls.__name__} '
+                f'(scalar fields: {sorted(columns)})',
+            )
 
 
 class StreamRegistry:
@@ -48,6 +114,9 @@ class StreamRegistry:
         retention: str | None = None,
         archive: str | None = None,
         index: tuple[str, ...] = (),
+        time_field: str | None = None,
+        latest_key: tuple[str, ...] = (),
+        latest_retention: str | None = None,
     ) -> Stream:
         """Register ``cls`` as a stream and return the :class:`Stream`.
 
@@ -56,21 +125,31 @@ class StreamRegistry:
             retention: Retention horizon, or ``None`` to keep forever.
             archive: Cold-archival horizon (roadmap), or ``None``.
             index: Extra field names to index.
+            time_field: A payload field naming the domain event time, or ``None``.
+            latest_key: Field names forming a latest-per-key projection's logical key.
+            latest_retention: Retention horizon for the latest projection, or ``None``.
 
         Raises:
-            RegistrationError: If ``cls`` is not a seared class or is already
-                registered.
+            RegistrationError: If ``cls`` is not a seared class, is already
+                registered, or ``time_field`` / ``latest_key`` name unsuitable fields.
         """
         if not (isinstance(cls, type) and issubclass(cls, s.Seared)):
             raise RegistrationError(f'{cls!r} is not a seared class')
         if cls in self._by_cls:
             raise RegistrationError(f'{cls.__name__} is already registered')
+        if time_field is not None:
+            _validate_time_field(cls, time_field)
+        if latest_key:
+            _validate_latest_key(cls, tuple(latest_key))
         stream = Stream(
             cls=cls,
             table=schema.table_name(cls),
             retention=retention,
             archive=archive,
             index=tuple(index),
+            time_field=time_field,
+            latest_key=tuple(latest_key),
+            latest_retention=latest_retention,
         )
         self._by_cls[cls] = stream
         return stream
