@@ -326,8 +326,8 @@ wheels = [
 
 [[package]]
 name = "zeared"
-version = "0.2.4"
-source = { git = "https://github.com/bwiswell/zeared#b63a71b00d22e9b9044938210830639bbc90a6a7" }
+version = "0.2.7"
+source = { git = "https://github.com/bwiswell/zeared#32d6da089d90b3ab2773b704b8e87ea7fa0c8ec5" }
 dependencies = [
     { name = "eclipse-zenoh" },
     { name = "msgpack" },
