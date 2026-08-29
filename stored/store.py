@@ -18,7 +18,7 @@ from .errors import ConfigError, QueryError
 from .log import get_logger
 from .query import TimeBound, parse_window, plan
 from .registry import Stream, StreamRegistry
-from .row import build_row, rehydrate
+from .row import Meta, build_row, rehydrate
 from .ttl import Reaper
 from .writer import Writer
 
@@ -148,7 +148,7 @@ class Store:
         cls: type[s.Seared],
         msg: s.Seared,
         *,
-        meta: Any = None,
+        meta: Meta | None = None,
         key: str | None = None,
     ) -> None:
         """Buffer one message for persistence (flushed by the writer).
@@ -156,7 +156,8 @@ class Store:
         Args:
             cls: The registered message class.
             msg: The instance to record.
-            meta: Zenoh metadata (mesh path), or ``None`` for a non-mesh record.
+            meta: Zenoh metadata (:class:`~stored.row.Meta`) on the mesh path, or
+                ``None`` for a non-mesh record.
             key: Explicit ``_key_expr`` when there is no ``meta``.
         """
         stream = self._registry.get(cls)
