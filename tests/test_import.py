@@ -2,11 +2,12 @@ import stored
 
 
 def test_version():
-    assert stored.__version__ == '0.2.2'
+    assert stored.__version__ == '0.2.3'
 
 
 def test_public_surface():
     assert hasattr(stored, 'Store')
+    assert hasattr(stored, 'Chronicler')
     assert hasattr(stored, 'StoredConfig')
     assert hasattr(stored, 'StreamSpec')
 

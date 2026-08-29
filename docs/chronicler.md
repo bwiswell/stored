@@ -1,13 +1,10 @@
 # The chronicler (`stored.zenoh`)
 
-The optional Zenoh layer — install the extra:
-
-```sh
-uv add "stored[zenoh] @ git+https://github.com/bwiswell/stored"
-```
-
-Importing `stored.zenoh` without the extra raises a friendly `ImportError`; the
-core never imports it.
+The Zenoh layer. `zeared` is a core dependency, so it ships with the base install
+(`uv add git+https://github.com/bwiswell/stored`) — no extra to enable. The
+seared-only core still imports no `zeared` at runtime, so a Store-only
+`import stored` stays transport-free; `stored.Chronicler` (re-exported lazily)
+and `stored.zenoh.Chronicler` both name the class below.
 
 ## Chronicler
 

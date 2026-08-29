@@ -34,10 +34,10 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    """Run the chronicler daemon (requires the ``zenoh`` extra)."""
+    """Run the chronicler daemon."""
     cfg = _load_config(args.config)
     log.configure(cfg.log_level)
-    from .zenoh import daemon  # lazy: core CLI works without the extra
+    from .zenoh import daemon  # lazy: keeps validate-config/prune/migrate transport-free
 
     return daemon.run(cfg)
 
