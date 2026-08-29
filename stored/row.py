@@ -12,13 +12,37 @@ import enum
 import itertools
 import pathlib
 import uuid
-from typing import Any
+from typing import Any, Protocol
 
 import seared as s
 
 from . import schema
 from ._time import to_naive_utc, utcnow
 from .registry import Stream
+
+
+class Meta(Protocol):
+    """Structural shape of the Zenoh metadata :func:`build_row` consumes.
+
+    Mirrors zeared's ``ZenohMeta`` **without importing it**, so the seared-only
+    core stays transport-free (plan 02) while ``ty`` gets a real shape for the
+    ``meta`` surface in place of ``Any``. Any object exposing these attributes —
+    the real ``ZenohMeta``, or a test stub — satisfies it.
+
+    Attributes:
+        key_expr: The Zenoh key expression the sample arrived on.
+        timestamp: The raw HLC string (dedup/ordering tiebreaker), or ``None``.
+        issued_at: The HLC delivery time parsed to UTC, or ``None``.
+        source_info: The publisher's source id, or ``None``.
+        schema: The publisher's wire ``SCHEMA`` tag, or ``None``.
+    """
+
+    key_expr: str
+    timestamp: str | None
+    issued_at: datetime.datetime | None
+    source_info: str | None
+    schema: str | None
+
 
 # Monotonic tiebreaker so records lacking an HLC stamp still get a unique,
 # sortable ``_ts_hlc``. ``itertools.count().__next__`` is atomic under CPython.
@@ -67,7 +91,7 @@ def _event_time(value: Any) -> datetime.datetime | None:
 def build_row(
     stream: Stream,
     msg: s.Seared,
-    meta: Any = None,
+    meta: Meta | None = None,
     *,
     key: str | None = None,
     recv_at: datetime.datetime | None = None,
@@ -77,9 +101,8 @@ def build_row(
     Args:
         stream: The registered stream ``msg`` belongs to.
         msg: A decoded message instance.
-        meta: Zenoh metadata (``ZenohMeta``-shaped: ``timestamp``, ``issued_at``,
-            ``key_expr``, ``source_info``, ``schema``), or ``None`` for a
-            non-mesh record.
+        meta: Zenoh metadata (see :class:`Meta`), or ``None`` for a non-mesh
+            record.
         key: Explicit ``_key_expr`` when there is no ``meta`` (non-mesh record).
         recv_at: Override the local receive time (mainly for tests).
 
@@ -88,9 +111,15 @@ def build_row(
     """
     cls = stream.cls
     now = to_naive_utc(recv_at) if recv_at is not None else utcnow()
-    issued_at = getattr(meta, 'issued_at', None)
-    ts_hlc = getattr(meta, 'timestamp', None)
-    key_expr = getattr(meta, 'key_expr', None) or key or ''
+    if meta is not None:
+        issued_at = meta.issued_at
+        ts_hlc = meta.timestamp
+        key_expr = meta.key_expr or key or ''
+        source_info = meta.source_info
+        msg_schema = meta.schema
+    else:
+        issued_at = ts_hlc = source_info = msg_schema = None
+        key_expr = key or ''
 
     if ts_hlc is None:
         ts_hlc = _synth_ts(now)
@@ -106,8 +135,8 @@ def build_row(
         '_ts_hlc': ts_hlc,
         '_issued_at': issued_at,
         '_event_at': event_at,
-        '_source': getattr(meta, 'source_info', None),
-        '_schema': getattr(meta, 'schema', None),
+        '_source': source_info,
+        '_schema': msg_schema,
         '_recv_at': now,
         '_ts_source': ts_source,
         '_payload': cls.dumps(msg),
@@ -132,4 +161,4 @@ def rehydrate(stream: Stream, columns: dict[str, Any]) -> s.Seared:
     return stream.cls.loads(columns['_payload'])
 
 
-__all__ = ['build_row', 'rehydrate']
+__all__ = ['Meta', 'build_row', 'rehydrate']
