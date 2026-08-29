@@ -3,7 +3,7 @@
 `stored` is three concentric layers, mirroring how `seared` → `zeared` nest.
 
 ```text
-stored.zenoh  (optional extra: stored[zenoh] → zeared)
+stored.zenoh  (zeared — a core dependency; Chronicler also re-exported lazily as stored.Chronicler)
    Chronicler: on_message → record      |  on_query → serve history
    session (timestamped) · daemon · CLI
 ──────────────────────────────────────────────────────────────────
@@ -14,11 +14,12 @@ StorageBackend
    SQLiteBackend (default)  ·  DuckDBBackend (stored[duckdb])  ·  [ Postgres — later ]
 ```
 
-The **core** knows only `seared` classes, tables, rows, and time — it never
-imports `zeared`, so persistence works with no transport installed (every
-`zeared` class *is* a `seared` class). The **zenoh layer** wires the core's
-`Writer` to a `zeared` subscriber and the core's query planner to a `zeared`
-queryable.
+`zeared` is a core dependency (plan 02), but the **core** knows only `seared`
+classes, tables, rows, and time and imports no `zeared` *at runtime* — so a
+Store-only `import stored` stays transport-free (every `zeared` class *is* a
+`seared` class, and the top-level `Chronicler` re-export is lazy). The **zenoh
+layer** wires the core's `Writer` to a `zeared` subscriber and the core's query
+planner to a `zeared` queryable.
 
 ## The gap it fills
 

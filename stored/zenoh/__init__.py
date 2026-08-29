@@ -1,18 +1,12 @@
-"""The optional Zenoh chronicler layer.
+"""The Zenoh chronicler layer.
 
-Importing this subpackage requires the ``zenoh`` extra (``stored[zenoh]``),
-which brings in ``zeared``. The core (``stored``) never imports it, so
-persistence works with no transport installed.
+``zeared`` is a core dependency of ``stored`` (plan 02), so this subpackage
+always imports. It wires the seared-only core's :class:`~stored.store.Store` to a
+``zeared`` subscriber (record) and queryable (serve history). The core itself
+imports no ``zeared`` at runtime — a Store-only ``import stored`` stays
+transport-free (the top-level ``Chronicler`` re-export is lazy).
 """
 from __future__ import annotations
-
-try:
-    import zeared as _zeared  # noqa: F401  (probe only)
-except ImportError as exc:  # pragma: no cover - exercised only without the extra
-    raise ImportError(
-        "stored.zenoh requires the 'zenoh' extra — install stored[zenoh] "
-        '(which provides zeared).',
-    ) from exc
 
 from .chronicler import Chronicler
 

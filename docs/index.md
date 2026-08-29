@@ -1,8 +1,8 @@
 # stored — docs
 
 `stored` is a database-wrapping **persistence layer for `seared` objects**, with
-a first-class (but optional) **Zenoh chronicler** built on `zeared`. It is the
-durable, time-keyed history layer beneath `zeared`'s last-value retention.
+a first-class **Zenoh chronicler** built on `zeared` (a core dependency). It is
+the durable, time-keyed history layer beneath `zeared`'s last-value retention.
 
 - **[architecture.md](architecture.md)** — the three layers, the ingest and
   query paths, timestamps, and concurrency.

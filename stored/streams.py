@@ -4,8 +4,8 @@
 retention, not a mesh. So resolving a ``StreamSpec``'s ``'module:ClassName'`` to its
 class and registering it lives here in the core, validated at the **seared** level —
 the store records ``seared`` objects, and the mesh-only ``zeared.Message`` distinction
-(a topic to publish/serve on) is the chronicler's concern, not storage's. This keeps
-the SQLite core CLI usable with no ``zenoh`` extra installed.
+(a topic to publish/serve on) is the chronicler's concern, not storage's. So
+``migrate``/``prune`` run against the pure storage core, importing no ``zeared``.
 """
 from __future__ import annotations
 

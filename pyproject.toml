@@ -1,23 +1,31 @@
 [project]
 name = "stored"
-version = "0.2.2"
-description = "A seared-flavored persistence layer and Zenoh chronicler"
+version = "0.2.3"
+description = "A zeared-native persistence layer and Zenoh chronicler"
 authors = [
     { name = "Benj Wiswell", email = "benjwiswell@gmail.com" },
 ]
 requires-python = ">=3.14,<4.0"
 dependencies = [
     "seared>=0.2.1",
+    # zeared is a core dependency: stored is a zeared-native chronicler (plan
+    # 02). Every real consumer is a mesh service that already carries zeared, so
+    # hiding it behind an extra guarded a consumer-less install. ``eclipse-zenoh``
+    # / ``msgpack`` arrive transitively. The seared-only *core* still imports no
+    # zeared at runtime (the top-level ``Chronicler`` re-export is lazy), so a
+    # Store-only ``import stored`` stays transport-free at import time.
+    "zeared>=0.2.4",
 ]
 
 [project.optional-dependencies]
-# The Zenoh chronicler layer (``stored.zenoh``). Optional so the core stays
-# transport-free: every zeared class is a seared class, so persistence never
-# needs zeared. ``eclipse-zenoh`` / ``msgpack`` arrive transitively via zeared.
-zenoh = ["zeared>=0.2.4"]
+# ``stored[zenoh]`` is retired — the Zenoh chronicler now ships with the base
+# install (plan 02). Kept as an empty alias for one release so no pinned install
+# string breaks; remove at 0.3.0.
+zenoh = []
 # The DuckDB backend — an optional upgrade for analytical/aggregation queries
 # (workspace persistence doc 08 §5). The default backend is stdlib ``sqlite3``,
-# so ``stored``'s core install is just ``seared`` (the rio tiny-surface ethos).
+# so ``stored``'s core install stays lean (the rio tiny-surface ethos targets the
+# columnar engine, never zeared).
 duckdb = ["duckdb>=1.1"]
 
 [dependency-groups]
@@ -75,7 +83,7 @@ convention = "google"
 extend_exclude = ["bench"]
 
 [tool.deptry.per_rule_ignores]
-# ``zeared`` (the ``stored.zenoh`` layer) and ``duckdb`` (the optional DuckDB
-# backend) are optional-extra deps imported only behind lazy guards;
-# ``pytest``/``pytest-asyncio`` are dev-only test deps.
-DEP001 = ["zeared", "duckdb"]
+# ``duckdb`` (the optional DuckDB backend) is an optional-extra dep imported only
+# behind a lazy guard. ``zeared`` is now a declared core dependency, so it no
+# longer needs a DEP001 ignore.
+DEP001 = ["duckdb"]
