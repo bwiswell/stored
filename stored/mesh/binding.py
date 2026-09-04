@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 import seared as s
 import zeared as z
 
-from ..errors import ConfigError
+from ..errors import ConfigError, QueryError
 from ..log import get_logger
 from ..query import DEFAULT_CHUNK, MAX_LIMIT
 from ..store import Store
@@ -39,8 +39,21 @@ _log = get_logger('mesh.binding')
 UNSET_FALSY: tuple[Any, ...] = ('', 0, 0.0, None)
 
 
+#: What a filter may point at: a fixed column/path name, or a function of the request
+#: that picks one per query — for a dimension the *caller* names, such as which zone
+#: layer to look inside.
+type FilterTarget = str | Callable[[Any], str]
+
+
 def _as_mapping(spec: Sequence[str] | Mapping[str, str]) -> dict[str, str]:
-    """Normalize a field spec to ``{request_field: column}`` (a bare name maps to itself)."""
+    """Normalize a field spec to ``{request_field: field}`` (a bare name maps to itself)."""
+    if isinstance(spec, Mapping):
+        return dict(spec)
+    return {name: name for name in spec}
+
+
+def _as_targets(spec: Sequence[str] | Mapping[str, FilterTarget]) -> dict[str, FilterTarget]:
+    """Normalize a filter spec, whose targets may be computed per request."""
     if isinstance(spec, Mapping):
         return dict(spec)
     return {name: name for name in spec}
@@ -159,7 +172,9 @@ class Binding:
         self,
         cls: type[M],
         *,
-        filters: Sequence[str] | Mapping[str, str] = (),
+        of: type[s.Seared] | None = None,
+        project: Callable[[Any, Any], M] | None = None,
+        filters: Sequence[str] | Mapping[str, FilterTarget] = (),
         since: str | None = None,
         until: str | None = None,
         limit: str | None = None,
@@ -185,8 +200,14 @@ class Binding:
         historian producing rows nobody is reading.
 
         Args:
-            cls: The registered class to serve. Its ``REQUEST`` types the request.
-            filters: Request fields that filter — names, or ``{field: column}``.
+            cls: The class to serve. Its ``REQUEST`` types the request; it is also the
+                stored class unless ``of`` says otherwise.
+            of: The stored class to read, when the reply contract differs from it.
+            project: ``(row, request) -> reply``; required when ``of`` differs from
+                ``cls``.
+            filters: Request fields that filter — names, or ``{field: target}``. A
+                target may be a callable ``(request) -> target`` when the caller names
+                the dimension (which zone layer, say); see :meth:`_split_filters`.
             since: Request field naming the lower time bound, if any.
             until: Request field naming the upper time bound, if any.
             limit: Request field naming the row cap, if any.
@@ -203,11 +224,15 @@ class Binding:
             The zeared ``Queryable`` handle (also closed by :meth:`close`).
 
         Raises:
-            ConfigError: If ``cls`` is not registered or declares no ``REQUEST``.
+            ConfigError: If the stored class is not registered, ``cls`` declares no
+                ``REQUEST``, or the reply differs from the row without a ``project``.
         """
-        self._require_registered(cls, f'serve_range({cls.__name__})')
+        stored_cls: type[s.Seared] = of or cls
+        what = f'serve_range({cls.__name__})'
+        self._require_registered(stored_cls, what)
         request_cls = self._require_request(cls, 'serve_range')
-        columns, paths = self._split_filters(cls, filters, f'serve_range({cls.__name__})')
+        shape = self._projection(cls, stored_cls, project, what)
+        columns, paths, computed = self._split_filters(stored_cls, filters, what)
         cap = default_limit if default_limit is not None else (MAX_LIMIT if stream else None)
 
         def _read(request: Any) -> dict[str, Any]:
@@ -222,6 +247,9 @@ class Binding:
                 for field, path in paths.items()
                 if _present(getattr(request, field, None), unset)
             }
+            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset)
+            applied.update(picked_columns)
+            where.update(picked_paths)
             return {
                 'since': self._bound(request, since, unset),
                 'until': self._bound(request, until, unset),
@@ -235,15 +263,16 @@ class Binding:
             if not isinstance(request, request_cls):
                 _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
                 return []
-            return await self._store.query(cls, **_read(request))
+            rows = await self._store.query(stored_cls, **_read(request))
+            return [shape(row, request) for row in rows]
 
         async def _stream(ctx: QueryContext) -> AsyncIterator[M]:
             request = ctx.request
             if not isinstance(request, request_cls):
                 _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
                 return
-            async for row in self._store.iter(cls, chunk=chunk, **_read(request)):
-                yield row
+            async for row in self._store.iter(stored_cls, chunk=chunk, **_read(request)):
+                yield shape(row, request)
 
         handler = _stream if stream else _collect
         handle = cls.on_query(handler, session=self._session, on_error=on_error)
@@ -255,7 +284,7 @@ class Binding:
         cls: type[R],
         *,
         of: type[s.Seared] | None = None,
-        filters: Sequence[str] | Mapping[str, str] = (),
+        filters: Sequence[str] | Mapping[str, FilterTarget] = (),
         since: str | None = None,
         until: str | None = None,
         limit: str | None = None,
@@ -310,13 +339,8 @@ class Binding:
                 f'{what}: {stored_cls.__name__} has no latest projection (register it with latest_key=…)',
             )
         request_cls = self._require_request(cls, 'serve_snapshot')
-        if project is None and stored_cls is not cls:
-            raise ConfigError(
-                f'{what} with of={stored_cls.__name__} needs project=<row, request -> reply>; '
-                'only the caller knows how a stored row becomes this reply',
-            )
-        shape: Callable[[Any, Any], R] = project if project is not None else (lambda row, _request: row)
-        columns, paths = self._split_filters(stored_cls, filters, what)
+        shape = self._projection(cls, stored_cls, project, what)
+        columns, paths, computed = self._split_filters(stored_cls, filters, what)
         cap = default_limit if default_limit is not None else (MAX_LIMIT if stream else None)
 
         def _read(request: Any) -> dict[str, Any]:
@@ -330,6 +354,9 @@ class Binding:
                 for field, path in paths.items()
                 if _present(getattr(request, field, None), unset)
             }
+            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset)
+            applied.update(picked_columns)
+            where.update(picked_paths)
             return {
                 'since': self._bound(request, since, unset),
                 'until': self._bound(request, until, unset),
@@ -447,18 +474,47 @@ class Binding:
 
     # -- helpers -----------------------------------------------------------
 
+    @staticmethod
+    def _projection[R](
+        cls: type[R],
+        stored_cls: type[s.Seared],
+        project: Callable[[Any, Any], R] | None,
+        what: str,
+    ) -> Callable[[Any, Any], R]:
+        """The row → reply function: the caller's, or the identity when they are one class.
+
+        Raises:
+            ConfigError: If the reply contract differs from the stored row and no
+                projection was given — only the caller knows how one becomes the other.
+        """
+        if project is not None:
+            return project
+        if stored_cls is not cls:
+            raise ConfigError(
+                f'{what} with of={stored_cls.__name__} needs project=<row, request -> reply>; '
+                'only the caller knows how a stored row becomes this reply',
+            )
+        return lambda row, _request: row
+
     def _split_filters(
         self,
         stored_cls: type[s.Seared],
-        filters: Sequence[str] | Mapping[str, str],
+        filters: Sequence[str] | Mapping[str, FilterTarget],
         what: str,
-    ) -> tuple[dict[str, str], dict[str, str]]:
-        """Sort each declared filter into a column filter or a path filter.
+    ) -> tuple[dict[str, str], dict[str, str], dict[str, Callable[[Any], str]]]:
+        """Sort each declared filter into a column filter, a path filter, or a computed one.
 
         The stream already says which is which — ``index`` names columns,
         ``json_paths`` names paths — so the binding resolves against the declaration
-        rather than guessing from the spelling, and a target in neither is a
+        rather than guessing from the spelling, and a fixed target in neither is a
         **bind-time** error rather than a query that never matches.
+
+        A **callable** target cannot be resolved that early: it is a function of the
+        request, for a dimension the caller names (which zone layer to look inside,
+        say). Those are resolved per query by :meth:`_resolve`, which means an
+        unknown one surfaces as a ``QueryError`` on that request rather than at
+        startup — a deliberate trade, since an unrecognized layer *is* a per-request
+        condition.
 
         Args:
             stored_cls: The class whose stream declares the dimensions and paths.
@@ -466,23 +522,68 @@ class Binding:
             what: The caller, for the error message.
 
         Returns:
-            ``({request field: column}, {request field: path})``.
+            ``({field: column}, {field: path}, {field: target function})``.
 
         Raises:
-            ConfigError: If a target names neither a declared dimension nor a
+            ConfigError: If a fixed target names neither a declared dimension nor a
                 declared path.
         """
         stream = self._store.store.registry.get(stored_cls)
         columns: dict[str, str] = {}
         paths: dict[str, str] = {}
-        for field, target in _as_mapping(filters).items():
-            if target in stream.json_paths:
+        computed: dict[str, Callable[[Any], str]] = {}
+        for field, target in _as_targets(filters).items():
+            if not isinstance(target, str):  # a function of the request, resolved per query
+                computed[field] = target
+            elif target in stream.json_paths:
                 paths[field] = target
             elif target in stream.index:
                 columns[field] = target
             else:
                 raise ConfigError(
                     f'{what}: {target!r} is neither an indexed dimension {sorted(stream.index)} '
+                    f'nor a declared json_index path {sorted(stream.json_paths)} of '
+                    f'{stored_cls.__name__}',
+                )
+        return columns, paths, computed
+
+    def _resolve(
+        self,
+        stored_cls: type[s.Seared],
+        computed: dict[str, Callable[[Any], str]],
+        request: Any,
+        unset: tuple[Any, ...],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Apply the computed targets for one request, sorted as columns and paths.
+
+        Args:
+            stored_cls: The class whose stream declares the dimensions and paths.
+            computed: ``{request field: target function}`` from :meth:`_split_filters`.
+            request: The decoded request payload.
+            unset: Values treated as "not provided".
+
+        Returns:
+            ``({column: value}, {path: value})`` for this request.
+
+        Raises:
+            QueryError: If a computed target names nothing the stream declared. The
+                query fails visibly rather than answering as though unfiltered.
+        """
+        stream = self._store.store.registry.get(stored_cls)
+        columns: dict[str, Any] = {}
+        paths: dict[str, Any] = {}
+        for field, pick in computed.items():
+            value = getattr(request, field, None)
+            if not _present(value, unset):
+                continue
+            target = pick(request)
+            if target in stream.json_paths:
+                paths[target] = value
+            elif target in stream.index:
+                columns[target] = value
+            else:
+                raise QueryError(
+                    f'{target!r} is neither an indexed dimension {sorted(stream.index)} '
                     f'nor a declared json_index path {sorted(stream.json_paths)} of '
                     f'{stored_cls.__name__}',
                 )

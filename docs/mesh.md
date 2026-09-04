@@ -116,7 +116,8 @@ binding.serve_snapshot(Placed, filters={'zone': 'zones.department', 'source': 's
                        limit='limit')
 ```
 
-`serve_range` answers "what happened"; this answers "what is the case". Same
+`serve_range` answers "what happened"; this answers "what is the case". Both take
+`of=`/`project=` when the reply contract differs from the stored row. Same
 declaration, pointed at the latest projection — so `since`/`until` narrow on **last
 seen**, not on when a row was recorded, and `stream=True` works the same way (a floor
 with 100k tags is exactly when you want it). `of=` + `project=` shape a reply that
@@ -138,6 +139,31 @@ binding.serve_snapshot(Placed, filters={'zone': 'zones.department'})   # who is 
 
 A target that names neither is a `ConfigError` **when the binding is declared**,
 rather than a query that quietly matches nothing.
+
+### When the caller names the dimension
+
+Zone layers are open-ended by design, so which path to filter on can belong to the
+*request* rather than the declaration. A target may therefore be a function of it:
+
+```python
+binding.serve_snapshot(
+    TagInZone, of=Location,
+    filters={'zone': lambda request: f'zones.{request.layer}'},
+)
+```
+
+The resolved target still has to be something the stream declared — the allow-list is
+unchanged — but the check necessarily moves to **query time**. Two consequences worth
+knowing before reaching for this:
+
+- An unrecognized target raises `QueryError` for that request, so the historian never
+  answers as though the filter had been applied.
+- zeared drops error replies from `aquery`'s result, so a caller passing no
+  `on_error` sees an empty list and cannot distinguish "nothing matched" from "that
+  dimension is not indexed". Callers that need the difference pass `on_error`.
+
+Prefer a fixed target wherever the dimension is known at declaration time; it fails at
+startup instead.
 
 ### `serve_latest(cls, of=…, project=…, missing=…)`
 
