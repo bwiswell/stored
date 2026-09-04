@@ -5,6 +5,8 @@ import pytest
 pytest.importorskip('duckdb')  # the DuckDB backend is the optional ``stored[duckdb]`` extra
 
 from stored.backends.duckdb_ import DuckDBBackend  # noqa: E402
+from stored.dialect import Dialect  # noqa: E402
+from stored.errors import BackendError  # noqa: E402
 
 
 def test_open_memory_and_close():
@@ -114,5 +116,33 @@ def test_ensure_index_creates_and_is_idempotent():
         backend.ensure_index('idx_t_id', 't', ('id',))  # re-registration must be a no-op
         rows = backend.select("SELECT index_name FROM duckdb_indexes() WHERE table_name = 't'")
         assert 'idx_t_id' in {r['index_name'] for r in rows}
+    finally:
+        backend.close()
+
+
+def test_dialect_json_value_executes_on_this_engine():
+    """DuckDB's json_extract yields JSON: a text compare needs the string extractor."""
+    backend = DuckDBBackend(':memory:')
+    try:
+        backend.ensure_table('t', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'},
+                             ('_key_expr', '_ts_hlc'))
+        backend.append_batch('t', [{
+            '_key_expr': 'k', '_ts_hlc': 'a',
+            '_payload': '{"zones": {"department": 5}, "conf": {"d": 0.75}, "tag": {"k": "abc"}}',
+        }])
+        dialect = backend.dialect
+
+        numeric = dialect.json_value('_payload', 'zones.department', text=False)
+        assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {numeric} = ?', [5])  # noqa: S608 — rendered fragment
+        floating = dialect.json_value('_payload', 'conf.d', text=False)
+        assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {floating} = ?', [0.75])  # noqa: S608
+        textual = dialect.json_value('_payload', 'tag.k', text=True)
+        assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {textual} = ?', ['abc'])  # noqa: S608
+
+        # …and the baseline spelling does not quietly mismatch here — it refuses:
+        # DuckDB tries to parse the bound string as JSON to compare against JSON.
+        baseline = Dialect().json_value('_payload', 'tag.k', text=True)
+        with pytest.raises(BackendError, match='Malformed JSON'):
+            backend.select(f'SELECT 1 AS hit FROM "t" WHERE {baseline} = ?', ['abc'])  # noqa: S608
     finally:
         backend.close()

@@ -205,7 +205,7 @@ class Store:
         """
         stream = self._registry.get(cls)
         window = parse_window(since=since, until=until, limit=limit, order=order)
-        sql, params = plan(stream, key or '', window, filters or None)
+        sql, params = plan(stream, key or '', window, filters or None, dialect=self._backend.dialect)
         self._writer.flush()
         with self._lock:
             rows = self._backend.select(sql, params)
@@ -293,6 +293,7 @@ class Store:
                 filters,
                 after=anchor,
                 skip_null_time=True,
+                dialect=self._backend.dialect,
             )
             with self._lock:
                 rows = self._backend.select(sql, params)

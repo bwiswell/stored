@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ._time import to_naive_utc, utcnow
+from .dialect import DEFAULT_DIALECT, Dialect
 from .errors import QueryError
 from .registry import Stream
 
@@ -118,6 +119,8 @@ def plan(
     *,
     after: Anchor | None = None,
     skip_null_time: bool = False,
+    table: str | None = None,
+    dialect: Dialect = DEFAULT_DIALECT,
 ) -> tuple[str, list[Any]]:
     """Plan a parameterized SELECT for ``stream`` over ``key_expr`` + ``window``.
 
@@ -134,6 +137,12 @@ def plan(
             ``time_field`` that arrived unset). Paging requires it: a ``NULL``
             compares as unknown against any anchor, so such a row could otherwise
             be yielded once and then silently strand the walk.
+        table: The table to read. Defaults to the stream's history table; the
+            latest projection carries the same columns and sort key, so pointing
+            this at it is the whole difference between a history read and a
+            current-state one.
+        dialect: How to spell the non-portable fragments (see
+            :mod:`stored.dialect`). Defaults to the SQLite baseline.
 
     Returns:
         ``(sql, params)`` ready for the backend.
@@ -146,7 +155,7 @@ def plan(
     time_col = stream.time_column
 
     if key_expr:
-        where.append('"_key_expr" GLOB ?' if '*' in key_expr else '"_key_expr" = ?')
+        where.append(dialect.key_match('_key_expr', wildcard='*' in key_expr))
         params.append(key_expr)
     if window.start is not None:
         where.append(f'"{time_col}" >= ?')
@@ -175,7 +184,7 @@ def plan(
     clause = f' WHERE {" AND ".join(where)}' if where else ''
     direction = 'ASC' if window.ascending else 'DESC'
     sql = (
-        f'SELECT * FROM "{stream.table}"{clause} '
+        f'SELECT * FROM "{table or stream.table}"{clause} '
         f'ORDER BY "{time_col}" {direction}, "_ts_hlc" {direction}, "_key_expr" {direction} '
         f'LIMIT {int(window.limit)}'
     )

@@ -26,6 +26,7 @@ import sqlite3
 from collections.abc import Sequence
 from typing import Any
 
+from ..dialect import DEFAULT_DIALECT, Dialect
 from ..errors import BackendError
 from ..log import get_logger
 
@@ -104,6 +105,11 @@ class SQLiteBackend:
     def path(self) -> str:
         """The database file path this backend is bound to."""
         return self._path
+
+    @property
+    def dialect(self) -> Dialect:
+        """SQLite is the baseline spelling."""
+        return DEFAULT_DIALECT
 
     def ensure_table(
         self,

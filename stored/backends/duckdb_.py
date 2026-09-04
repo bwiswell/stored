@@ -12,6 +12,7 @@ from typing import Any
 
 import duckdb
 
+from ..dialect import Dialect, DuckDBDialect
 from ..errors import BackendError
 from ..log import get_logger
 
@@ -20,6 +21,8 @@ _log = get_logger('backends.duckdb')
 # Rows per INSERT statement. A single multi-row INSERT is orders of magnitude
 # faster than per-row executemany on DuckDB; chunking bounds statement size.
 _CHUNK = 1000
+
+_DIALECT = DuckDBDialect()
 
 
 class DuckDBBackend:
@@ -44,6 +47,11 @@ class DuckDBBackend:
     def path(self) -> str:
         """The database file path this backend is bound to."""
         return self._path
+
+    @property
+    def dialect(self) -> Dialect:
+        """DuckDB differs from the baseline only in how it reaches into JSON."""
+        return _DIALECT
 
     def ensure_table(
         self,

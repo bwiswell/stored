@@ -30,7 +30,7 @@ from .store import Store
 if TYPE_CHECKING:
     from .zenoh import Chronicler
 
-__version__ = '0.2.10'
+__version__ = '0.2.11'
 
 __all__ = [
     'Store',

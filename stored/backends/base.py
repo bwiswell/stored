@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
+from ..dialect import Dialect
+
 
 class StorageBackend(Protocol):
     """Minimal storage surface the ``stored`` core depends on.
@@ -19,6 +21,11 @@ class StorageBackend(Protocol):
     :meth:`append_batch` from the writer, :meth:`select` from the query planner,
     and :meth:`delete_before` from the TTL reaper.
     """
+
+    @property
+    def dialect(self) -> Dialect:
+        """How this engine spells the non-portable fragments (see :mod:`stored.dialect`)."""
+        ...
 
     def ensure_table(
         self,
