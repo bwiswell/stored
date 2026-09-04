@@ -43,8 +43,9 @@ uv add git+https://github.com/bwiswell/stored
 uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored"
 ```
 
-The Zenoh chronicler ships with the base install (`zeared` is a core dependency);
-the retired `stored[zenoh]` extra remains a no-op alias for one release.
+The Zenoh chronicler ships with the base install (`zeared` is a core dependency).
+The `stored[zenoh]` extra was retired in 0.3.0 — it had been an empty alias since the
+chronicler moved into the base install.
 
 Requires Python ≥ 3.14.
 
@@ -218,11 +219,14 @@ Tests mirror the source layout. The mesh tests spin up a loopback Zenoh peer
 
 ## Status
 
-The v1 core is functional: SQLite-backed persistence (stdlib; DuckDB an optional
-backend), a batched writer, event-time keying (`time_field`), latest-per-key
-projections (`latest_key` / `store.latest`), secondary indexes, bounded-memory
-streaming (`store.iter`), TTL pruning, the service layer (`stored.mesh`:
-`AsyncStore`, declarative record / range / last-known bindings with optionally
-streamed ranges, and replay-as-publication), the Zenoh chronicler (record + serve history), and a runnable
-daemon. Deferred: the Postgres backend, complex-field column promotion, the
-cold-archival tiers.
+The core is functional: SQLite-backed persistence (stdlib; DuckDB an optional backend),
+a batched writer, event-time keying (`time_field`), latest-per-key projections
+(`latest_key` / `store.latest`), population reads (`query_latest` / `iter_latest`),
+bounded-memory streaming (`store.iter`), path filters into `dict` fields
+(`json_index` / `where=`) with secondary and expression indexes, TTL pruning, the
+service layer (`stored.mesh`: an async facade, declarative record / range / last-known /
+snapshot bindings with optionally streamed replies, and replay-as-publication), the
+Zenoh chronicler, and a runnable daemon.
+
+Deferred: the Postgres backend, complex-field column promotion, and the cold-archival
+tiers.

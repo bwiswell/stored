@@ -28,7 +28,7 @@ class Meta(Protocol):
     """Structural shape of the Zenoh metadata :func:`build_row` consumes.
 
     Mirrors zeared's ``ZenohMeta`` **without importing it**, so the seared-only
-    core stays transport-free (plan 02) while ``ty`` gets a real shape for the
+    core stays transport-free while ``ty`` gets a real shape for the
     ``meta`` surface in place of ``Any``. Any object exposing these attributes —
     the real ``ZenohMeta``, or a test stub — satisfies it.
 

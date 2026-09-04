@@ -720,3 +720,67 @@ async def test_serve_range_needs_a_projection_it_can_justify(session):
     finally:
         binding.close()
         await store.close()
+
+
+# -- the service's ceiling ---------------------------------------------------
+
+
+async def test_max_limit_clamps_what_the_caller_asks_for(session):
+    """`default_limit` fills an omission; `max_limit` overrules an explicit request."""
+    zeared.session = session
+    store, binding = _store(), None
+    try:
+        for i in range(20):
+            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+        await store.flush()
+
+        binding = Binding(store, session=session)
+        binding.serve_range(Event, filters=('source',), limit='limit', max_limit=5)
+        await _settle()
+
+        greedy = await zeared.aquery(Event, request=HistoryRequest(limit=1000), timeout=5.0)
+        assert len(greedy) == 5, 'an explicit limit must not talk past the service ceiling'
+
+        modest = await zeared.aquery(Event, request=HistoryRequest(limit=3), timeout=5.0)
+        assert len(modest) == 3, 'a request under the ceiling is honoured as asked'
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_max_limit_bounds_a_snapshot_too(session):
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(Placed, filters={'zone': 'zones.department'}, limit='limit', max_limit=1)
+        await _settle()
+
+        capped = await zeared.aquery(Placed, request=ZoneRequest(zone=5, limit=100), timeout=5.0)
+        assert len(capped) == 1
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_max_limit_bounds_an_omitted_limit_when_streaming(session):
+    """Streaming needs a fallback (None means unbounded), and the ceiling is the honest one."""
+    zeared.session = session
+    store, binding = _store(), None
+    try:
+        for i in range(20):
+            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+        await store.flush()
+
+        binding = Binding(store, session=session)
+        binding.serve_range(Event, filters=('source',), stream=True, chunk=2, max_limit=4)
+        await _settle()
+
+        streamed = await zeared.aquery(Event, request=HistoryRequest(), timeout=5.0)
+        assert len(streamed) == 4
+    finally:
+        if binding:
+            binding.close()
+        await store.close()

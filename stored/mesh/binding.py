@@ -47,6 +47,50 @@ UNSET_FALSY: tuple[Any, ...] = ('', 0, 0.0, None)
 type FilterTarget = str | Callable[[Any], str]
 
 
+def _effective_limit(
+    requested: int | None,
+    *,
+    default: int | None,
+    maximum: int | None,
+    streaming: bool,
+) -> int | None:
+    """The row cap actually applied to one request.
+
+    Three dials, and they answer different questions:
+
+    - ``requested`` — what the caller asked for, or ``None`` when they did not.
+    - ``default`` — what an *omitted* limit means.
+    - ``maximum`` — the ceiling the **service** imposes, whatever the caller asked,
+      including when they asked for nothing.
+
+    The last one is the one a caller cannot talk its way past, which is why it belongs
+    on the binding: a gateway collects every reply into a single frame, so an
+    unclamped request for a hundred thousand rows is a hundred-thousand-row frame at
+    somebody else's expense.
+
+    Args:
+        requested: The limit from the request, or ``None``.
+        default: The cap for an omitted limit, or ``None`` to leave it to the planner.
+        maximum: The service's ceiling, or ``None`` for none beyond the planner's. When
+            set, it also bounds a request that names no limit at all.
+        streaming: Whether the handler streams (where ``None`` means *unbounded*, so a
+            fallback is required rather than optional).
+
+    Returns:
+        The limit to pass to the store, or ``None`` to accept the planner's default.
+    """
+    value = requested if requested is not None else default
+    # An OMITTED limit is the most natural way to ask for everything, so a declared
+    # ceiling has to answer it too. Left to the planner it would land on DEFAULT_LIMIT,
+    # which quietly exceeds a `maximum` set below that — the one case the parameter
+    # exists for, failing silently.
+    if value is None and (streaming or maximum is not None):
+        value = maximum if maximum is not None else MAX_LIMIT
+    if value is not None and maximum is not None:
+        value = min(value, maximum)
+    return value
+
+
 def _as_mapping(spec: Sequence[str] | Mapping[str, str]) -> dict[str, str]:
     """Normalize a field spec to ``{request_field: field}`` (a bare name maps to itself)."""
     if isinstance(spec, Mapping):
@@ -186,6 +230,7 @@ class Binding:
         until: str | None = None,
         limit: str | None = None,
         default_limit: int | None = None,
+        max_limit: int | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
         unset: tuple[Any, ...] = UNSET_FALSY,
@@ -219,7 +264,12 @@ class Binding:
             until: Request field naming the upper time bound, if any.
             limit: Request field naming the row cap, if any.
             default_limit: Cap applied when the request omits one. Streaming defaults
-                it to ``MAX_LIMIT``; pass an explicit value to raise or lower it.
+                it to ``max_limit`` (or ``MAX_LIMIT``); pass an explicit value to raise
+                or lower it.
+            max_limit: The **service's** ceiling, applied whatever the request asks.
+                ``default_limit`` only fills in an omission; this one clamps. Worth
+                setting wherever replies are collected into a single frame downstream —
+                a caller asking for a hundred thousand rows should not get them.
             stream: Reply row-by-row from a paged walk instead of one materialized
                 list. No contract change — the same replies, produced lazily.
             chunk: Rows per page while streaming (the memory bound and thread-hop
@@ -240,7 +290,14 @@ class Binding:
         request_cls = self._require_request(cls, 'serve_range')
         shape = self._projection(cls, stored_cls, project, what)
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
-        cap = default_limit if default_limit is not None else (MAX_LIMIT if stream else None)
+
+        def _cap(request: Any) -> int | None:
+            return _effective_limit(
+                self._bound(request, limit, unset),
+                default=default_limit,
+                maximum=max_limit,
+                streaming=stream,
+            )
 
         def _read(request: Any) -> dict[str, Any]:
             """The request, read as store keywords — identical for both reply shapes."""
@@ -260,7 +317,7 @@ class Binding:
             return {
                 'since': self._bound(request, since, unset),
                 'until': self._bound(request, until, unset),
-                'limit': self._bound(request, limit, unset) or cap,
+                'limit': _cap(request),
                 'where': where or None,
                 **applied,
             }
@@ -296,6 +353,7 @@ class Binding:
         until: str | None = None,
         limit: str | None = None,
         default_limit: int | None = None,
+        max_limit: int | None = None,
         project: Callable[[Any, Any], R] | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
@@ -322,8 +380,11 @@ class Binding:
             until: Request field naming an upper bound on last-seen, if any.
             limit: Request field naming the row cap, if any.
             default_limit: Cap applied when the request omits one. Streaming defaults
-                it to ``MAX_LIMIT``, as :meth:`serve_range` does and for the same
-                reason.
+                it to ``max_limit`` (or ``MAX_LIMIT``), as :meth:`serve_range` does and
+                for the same reason.
+            max_limit: The service's ceiling, applied whatever the request asks — see
+                :meth:`serve_range`. A population snapshot is exactly where an
+                unclamped request hurts.
             project: ``(row, request) -> reply``; required when ``of`` differs from
                 ``cls``.
             stream: Reply row-by-row from a paged walk instead of one list.
@@ -349,7 +410,14 @@ class Binding:
         request_cls = self._require_request(cls, 'serve_snapshot')
         shape = self._projection(cls, stored_cls, project, what)
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
-        cap = default_limit if default_limit is not None else (MAX_LIMIT if stream else None)
+
+        def _cap(request: Any) -> int | None:
+            return _effective_limit(
+                self._bound(request, limit, unset),
+                default=default_limit,
+                maximum=max_limit,
+                streaming=stream,
+            )
 
         def _read(request: Any) -> dict[str, Any]:
             applied = {
@@ -368,7 +436,7 @@ class Binding:
             return {
                 'since': self._bound(request, since, unset),
                 'until': self._bound(request, until, unset),
-                'limit': self._bound(request, limit, unset) or cap,
+                'limit': _cap(request),
                 'where': where or None,
                 **applied,
             }
@@ -412,6 +480,9 @@ class Binding:
         ``project`` hook shapes the reply, because only the caller knows how a stored
         row becomes its contract. When they are the same class (a row type that
         doubles as its own reply), the projection is the identity and can be omitted.
+
+        It takes no ``max_limit``, and that is not an oversight: a lookup answers one
+        entity, so there is no row count for a caller to inflate.
 
         Args:
             cls: The reply contract; its ``REQUEST`` types the request.

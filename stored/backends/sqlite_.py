@@ -2,8 +2,8 @@
 
 Stdlib ``sqlite3`` — **zero new dependency**, embedded, single-file, and WAL mode
 handles the sole-writer chronicler's store-scale write rate. This is ``stored``'s
-default backend, matching the ``rio-*`` tiny-surface ethos (workspace persistence
-doc 08 §5); DuckDB stays an optional extra for the analytics upgrade path.
+default backend: the dependency surface stays as small as the consumers demand, and
+DuckDB remains an optional extra for the analytical/aggregation path.
 
 **Types.** The core hands column types in DuckDB spelling (``schema.SCALAR_TYPES``);
 :data:`_TYPE_MAP` remaps them to SQLite declared types. Temporal values are the only
