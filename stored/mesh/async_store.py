@@ -105,6 +105,56 @@ class AsyncStore:
         """Await :meth:`stored.Store.latest` on a worker thread."""
         return await asyncio.to_thread(lambda: self._store.latest(cls, **key))
 
+    async def query_latest[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        **filters: Any,
+    ) -> list[M]:
+        """Await :meth:`stored.Store.query_latest` — current state for every matching entity."""
+        return await asyncio.to_thread(
+            lambda: self._store.query_latest(
+                cls, key=key, since=since, until=until, limit=limit, order=order, **filters,
+            ),
+        )
+
+    async def iter_latest[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        chunk: int = DEFAULT_CHUNK,
+        **filters: Any,
+    ) -> AsyncIterator[M]:
+        """Stream current state without blocking the loop — :meth:`iter`'s projection sibling.
+
+        Same one-hop-per-page pump and the same flush-on-first-step divergence from the
+        sync call; see :meth:`iter`.
+        """
+        walk = await asyncio.to_thread(
+            lambda: self._store.iter_latest(
+                cls, key=key, since=since, until=until, limit=limit, order=order, chunk=chunk, **filters,
+            ),
+        )
+        try:
+            while True:
+                page = await asyncio.to_thread(lambda: list(itertools.islice(walk, chunk)))
+                for row in page:
+                    yield row
+                if len(page) < chunk:
+                    return
+        finally:
+            walk.close()
+
     async def iter[M: s.Seared](  # noqa: A003 — mirrors ``Store.iter``
         self,
         cls: type[M],

@@ -61,6 +61,8 @@ def index_specs(
     table: str,
     time_column: str,
     dimensions: tuple[str, ...],
+    *,
+    served_by_pk: tuple[str, ...] = (),
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """The secondary indexes a stream table wants, as ``(name, columns)`` pairs.
 
@@ -73,19 +75,23 @@ def index_specs(
       composite, because filters are independent (a query may name ``kind`` without
       ``source``, which a composite's leading-column rule would not serve).
 
-    ``_key_expr`` equality needs no index of its own: it leads the primary key, whose
-    unique index already serves it.
+    A column that **leads** the table's primary key needs no index of its own — the
+    PK's unique index already serves equality on it. That is why the history table
+    gets no ``_key_expr`` index, and why the latest projection (keyed by the logical
+    entity) gets none for the first field of that key.
 
     Args:
         table: The stream's table name (indexes are named after it).
         time_column: The stream's temporal axis (``_event_at`` or ``_issued_at``).
         dimensions: The declared queryable dimensions (``Stream.index``).
+        served_by_pk: Columns the table's primary key already serves — in practice
+            its leading column, since only a leading column is served by a composite.
 
     Returns:
         ``(index_name, columns)`` pairs, temporal index first.
     """
     specs = [(f'idx_{table}_time', (time_column, '_ts_hlc', '_key_expr'))]
-    specs.extend((f'idx_{table}_{dim}', (dim,)) for dim in dimensions)
+    specs.extend((f'idx_{table}_{dim}', (dim,)) for dim in dimensions if dim not in served_by_pk)
     return tuple(specs)
 
 #: Temporal-axis column names. ``_issued_at`` is the mesh delivery/issue time (the

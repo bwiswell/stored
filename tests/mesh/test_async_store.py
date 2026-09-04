@@ -129,3 +129,25 @@ async def test_query_errors_propagate(tmp_path):
             await store.query(Msg, name='nope')  # not an indexed dimension
     finally:
         await store.close()
+
+
+async def test_current_state_reads_await_off_the_loop(tmp_path):
+    """The console's question, asked from a service: one row per entity, never blocking."""
+    store = _astore(tmp_path)
+    try:
+        store.register(Msg, index=('id',), latest_key=('id',))
+        for i in range(12):
+            store.record(Msg, Msg(id=i, name=f'n{i}'))
+            store.record(Msg, Msg(id=i, name=f'n{i}-newer'))
+        await store.flush()
+
+        rows = await store.query_latest(Msg)
+        assert len(rows) == 12
+        assert all(r.name.endswith('-newer') for r in rows)
+        assert [r.id for r in rows] == list(range(12))
+
+        streamed = [r.id async for r in store.iter_latest(Msg, chunk=5)]
+        assert streamed == list(range(12))
+        assert [r.id async for r in store.iter_latest(Msg, id=7)] == [7]
+    finally:
+        await store.close()

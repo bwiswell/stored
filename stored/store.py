@@ -146,10 +146,19 @@ class Store:
         columns = schema.derive_columns(cls)
         with self._lock:
             self._backend.ensure_table(stream.table, columns, schema.PRIMARY_KEY)
-            for index_name, index_columns in schema.index_specs(stream.table, stream.time_column, stream.index):
+            for index_name, index_columns in schema.index_specs(
+                stream.table, stream.time_column, stream.index, served_by_pk=schema.PRIMARY_KEY[:1],
+            ):
                 self._backend.ensure_index(index_name, stream.table, index_columns)
             if stream.has_latest:
                 self._backend.ensure_table(stream.latest_table, columns, stream.latest_key)
+                # ``query_latest`` reads this table, so it wants the same indexes —
+                # minus whatever the entity key already leads.
+                for index_name, index_columns in schema.index_specs(
+                    stream.latest_table, stream.time_column, stream.index,
+                    served_by_pk=stream.latest_key[:1],
+                ):
+                    self._backend.ensure_index(index_name, stream.latest_table, index_columns)
         if stream.has_latest:
             self._writer.register_latest(
                 stream.table, stream.latest_table, stream.latest_key, stream.time_column,
@@ -205,11 +214,7 @@ class Store:
         """
         stream = self._registry.get(cls)
         window = parse_window(since=since, until=until, limit=limit, order=order)
-        sql, params = plan(stream, key or '', window, filters or None, dialect=self._backend.dialect)
-        self._writer.flush()
-        with self._lock:
-            rows = self._backend.select(sql, params)
-        return [rehydrate(cls, columns) for columns in rows]
+        return self._select(cls, stream, stream.table, window, key or '', filters or None)
 
     def iter[M: s.Seared](  # noqa: A003 — the streaming sibling of ``query``
         self,
@@ -268,19 +273,36 @@ class Store:
         # Resolve the window once: a relative bound ('-1h') must not drift per page.
         window = parse_window(since=since, until=until, limit=chunk, order=order)
         self._writer.flush()
-        return self._pages(cls, stream, window, key or '', filters or None, chunk, limit)
+        return self._pages(cls, stream, stream.table, window, key or '', filters or None, chunk, limit)
 
-    def _pages[M: s.Seared](
+    def _select[M: s.Seared](
         self,
         cls: type[M],
         stream: Stream,
+        table: str,
+        window: Window,
+        key_expr: str,
+        filters: dict[str, Any] | None,
+    ) -> list[M]:
+        """Plan and run one read against ``table`` (flushes first — read-your-writes)."""
+        sql, params = plan(stream, key_expr, window, filters, table=table, dialect=self._backend.dialect)
+        self._writer.flush()
+        with self._lock:
+            rows = self._backend.select(sql, params)
+        return [rehydrate(cls, columns) for columns in rows]
+
+    def _pages[M: s.Seared](  # noqa: PLR0913 — the walk's whole state
+        self,
+        cls: type[M],
+        stream: Stream,
+        table: str,
         window: Window,
         key_expr: str,
         filters: dict[str, Any] | None,
         chunk: int,
         limit: int | None,
     ) -> Generator[M]:
-        """Walk ``stream`` page by page, resuming each from the previous page's last row."""
+        """Walk ``table`` page by page, resuming each from the previous page's last row."""
         remaining = limit
         anchor: Anchor | None = None
         time_col = stream.time_column
@@ -293,6 +315,7 @@ class Store:
                 filters,
                 after=anchor,
                 skip_null_time=True,
+                table=table,
                 dialect=self._backend.dialect,
             )
             with self._lock:
@@ -307,6 +330,101 @@ class Store:
                 return  # short page — the window is exhausted
             last = rows[-1]
             anchor = (last[time_col], last['_ts_hlc'], last['_key_expr'])
+
+    def query_latest[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        **filters: Any,
+    ) -> list[M]:
+        """Query **current state**: the newest instance of every entity, filtered.
+
+        Where :meth:`latest` answers "where is this one tag", this answers "where is
+        everything" — the population question an operator console asks. It reads the
+        latest-per-key projection, which carries the same columns and the same sort
+        key as the history table, so filters, ordering and paging behave identically;
+        only the rows differ (one per entity, rather than one per observation).
+
+        ``since``/``until`` therefore mean **last seen in this window** — a different
+        question from "recorded in this window", and a useful one ("who has been seen
+        in department 5 in the last hour"). Omit them for a straight snapshot.
+
+        Args:
+            cls: A registered class with a latest projection.
+            key: Topic key to match (``None`` matches all; ``*`` globs).
+            since: Lower bound on when the entity was last seen.
+            until: Upper bound on the same.
+            limit: Maximum rows (defaults + clamps per the query planner).
+            order: ``'asc'`` or ``'desc'`` by last-seen time.
+            **filters: Equality filters on indexed field dimensions.
+
+        Returns:
+            One decoded ``cls`` instance per matching entity, ordered by last-seen.
+
+        Raises:
+            ConfigError: If ``cls`` has no latest projection.
+        """
+        stream = self._require_latest(cls, 'query_latest')
+        window = parse_window(since=since, until=until, limit=limit, order=order)
+        return self._select(cls, stream, stream.latest_table, window, key or '', filters or None)
+
+    def iter_latest[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        chunk: int = DEFAULT_CHUNK,
+        **filters: Any,
+    ) -> Generator[M]:
+        """Stream current state in bounded memory — :meth:`query_latest`, paged.
+
+        The streaming sibling, for a population too large to hand back as one list:
+        a floor with a hundred thousand tags has a hundred thousand latest rows.
+        Same flush-at-open, keyset resumption and not-a-snapshot properties as
+        :meth:`iter` (see there); ``limit=None`` means every matching entity.
+
+        Args:
+            cls: A registered class with a latest projection.
+            key: Topic key to match (``None`` matches all; ``*`` globs).
+            since: Lower bound on when the entity was last seen.
+            until: Upper bound on the same.
+            limit: Maximum rows in total, or ``None`` for every match.
+            order: ``'asc'`` or ``'desc'`` by last-seen time.
+            chunk: Rows per page — the memory bound, not a row cap.
+            **filters: Equality filters on indexed field dimensions.
+
+        Yields:
+            One decoded ``cls`` instance per matching entity, ordered by last-seen.
+
+        Raises:
+            ConfigError: If ``cls`` has no latest projection.
+            QueryError: If ``chunk``/``limit`` is invalid, a bound is unparseable,
+                or a filter names a non-indexed field.
+        """
+        if chunk < 1:
+            raise QueryError(f'chunk must be positive, got {chunk}')
+        if limit is not None and limit < 0:
+            raise QueryError(f'limit must be non-negative, got {limit}')
+        stream = self._require_latest(cls, 'iter_latest')
+        window = parse_window(since=since, until=until, limit=chunk, order=order)
+        self._writer.flush()
+        return self._pages(cls, stream, stream.latest_table, window, key or '', filters or None, chunk, limit)
+
+    def _require_latest(self, cls: type[s.Seared], what: str) -> Stream:
+        """The stream for ``cls``, or a clear error when it keeps no latest projection."""
+        stream = self._registry.get(cls)
+        if not stream.has_latest:
+            raise ConfigError(f'{what}({cls.__name__}) needs a latest projection (register with latest_key=…)')
+        return stream
 
     def latest[M: s.Seared](self, cls: type[M], **key: Any) -> M | None:
         """Return the newest-recorded instance for one logical-entity ``key``.
@@ -327,9 +445,7 @@ class Store:
             ConfigError: If ``cls`` has no latest projection.
             QueryError: If ``key`` does not name exactly the projection's key fields.
         """
-        stream = self._registry.get(cls)
-        if not stream.has_latest:
-            raise ConfigError(f'{cls.__name__} has no latest projection (register with latest_key=…)')
+        stream = self._require_latest(cls, 'latest')
         if set(key) != set(stream.latest_key):
             raise QueryError(
                 f'latest({cls.__name__}) needs exactly {list(stream.latest_key)}, got {sorted(key)}',
