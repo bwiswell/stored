@@ -83,7 +83,9 @@ Some fields have **open-ended keys by design** — a location's `zones` is
 `{layer: zone_id}`, and the layer names belong to the deployment, so they can never
 be columns. Declare a path with `json_index=('zones.department',)` and it becomes
 filterable through `where=` on every read; `stored` translates the path into the
-payload's own spelling, so a field aliased with `data_key=` still matches.
+payload's own spelling, so a field aliased with `data_key=` still matches — and
+indexes it on both tables (a real expression index on SQLite; DuckDB says in the log
+that it will scan instead).
 
 `query`/`iter` read the **history** table; `query_latest`/`iter_latest` read the
 **latest projection** — one row per entity instead of one per observation, for the

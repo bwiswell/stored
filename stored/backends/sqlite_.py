@@ -146,6 +146,32 @@ class SQLiteBackend:
         except sqlite3.Error as exc:
             raise BackendError(f'ensure_index({name!r}) failed: {exc}') from exc
 
+    def ensure_json_index(
+        self,
+        name: str,
+        table: str,
+        path: str,
+        sort_columns: Sequence[str] = (),
+    ) -> None:
+        """Create an expression index over ``_payload``'s ``path`` if absent.
+
+        The expression is rendered by the same dialect call the query planner uses,
+        because SQLite matches an expression index **textually**: spell it any other
+        way here and the index exists but is never chosen.
+
+        ``sort_columns`` follow the expression, which is what lets one index serve the
+        whole query rather than half of it — measured: expression alone gives
+        ``SEARCH … (<expr>=?)`` plus ``USE TEMP B-TREE FOR ORDER BY``; with the sort
+        key appended the temp B-tree disappears.
+        """
+        columns = ', '.join([self.dialect.json_value('_payload', path, text=False)]
+                            + [f'"{col}"' for col in sort_columns])
+        try:
+            self._conn.execute(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ({columns})')
+            self._conn.commit()
+        except sqlite3.Error as exc:
+            raise BackendError(f'ensure_json_index({name!r}) failed: {exc}') from exc
+
     def append_batch(
         self,
         table: str,

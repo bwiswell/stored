@@ -93,6 +93,26 @@ class DuckDBBackend:
         except duckdb.Error as exc:
             raise BackendError(f'ensure_index({name!r}) failed: {exc}') from exc
 
+    def ensure_json_index(
+        self,
+        name: str,
+        table: str,
+        path: str,
+        sort_columns: Sequence[str] = (),
+    ) -> None:
+        """No-op: DuckDB cannot index an expression — the filter is correct, and scans.
+
+        ``CREATE INDEX`` over ``json_extract`` is refused by the binder here, so this
+        logs rather than raises: a declared path stays *queryable* on this backend,
+        just unindexed. Said out loud at registration so the difference shows up in
+        the service log rather than as an unexplained slow query later.
+        """
+        _log.warning(
+            'duckdb cannot index the expression for %s on %s (path %r) — the filter will scan; '
+            'the SQLite backend indexes it',
+            name, table, path,
+        )
+
     def append_batch(
         self,
         table: str,

@@ -154,6 +154,9 @@ class Store:
                 stream.table, stream.time_column, stream.index, served_by_pk=schema.PRIMARY_KEY[:1],
             ):
                 self._backend.ensure_index(index_name, stream.table, index_columns)
+            sort_key = (stream.time_column, '_ts_hlc', '_key_expr')
+            for index_name, wire in schema.json_index_specs(stream.table, stream.json_paths):
+                self._backend.ensure_json_index(index_name, stream.table, wire, sort_key)
             if stream.has_latest:
                 self._backend.ensure_table(stream.latest_table, columns, stream.latest_key)
                 # ``query_latest`` reads this table, so it wants the same indexes —
@@ -163,6 +166,8 @@ class Store:
                     served_by_pk=stream.latest_key[:1],
                 ):
                     self._backend.ensure_index(index_name, stream.latest_table, index_columns)
+                for index_name, wire in schema.json_index_specs(stream.latest_table, stream.json_paths):
+                    self._backend.ensure_json_index(index_name, stream.latest_table, wire, sort_key)
         if stream.has_latest:
             self._writer.register_latest(
                 stream.table, stream.latest_table, stream.latest_key, stream.time_column,

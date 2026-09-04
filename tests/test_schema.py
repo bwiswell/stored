@@ -75,3 +75,17 @@ def test_wire_path_rejects_an_unknown_head():
 
     with pytest.raises(SchemaError, match='not a field'):
         schema.wire_path(Aliased, 'nope.key')
+
+
+def test_json_index_specs_names_after_the_declared_path():
+    specs = schema.json_index_specs('stream_loc', {'zones.department': 'zn.department'})
+    assert specs == (('idx_stream_loc_json_zones_department', 'zn.department'),)
+
+
+def test_json_index_specs_slugs_anything_unsafe():
+    specs = schema.json_index_specs('t', {'a.b-c': 'a.b-c'})
+    assert specs[0][0] == 'idx_t_json_a_b_c'
+
+
+def test_json_index_specs_is_empty_without_declarations():
+    assert schema.json_index_specs('t', {}) == ()

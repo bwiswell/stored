@@ -60,6 +60,29 @@ PRIMARY_KEY: tuple[str, str] = ('_key_expr', '_ts_hlc')
 
 
 
+
+def json_index_specs(table: str, paths: dict[str, str]) -> tuple[tuple[str, str], ...]:
+    """The expression indexes a stream's declared ``json_index`` paths want.
+
+    Named separately from :func:`index_specs` because the shape differs: a column
+    index names columns, this one names an *expression* over ``_payload``. The index
+    name is derived from the declared path (dots and anything else unsafe collapsed
+    to underscores), so it is stable across restarts and readable in ``.schema``.
+
+    Args:
+        table: The table the index belongs to.
+        paths: ``{declared path: wire path}`` from ``Stream.json_paths``.
+
+    Returns:
+        ``(index_name, wire_path)`` pairs.
+    """
+    specs = []
+    for declared, wire in paths.items():
+        slug = ''.join(char if char.isalnum() else '_' for char in declared)
+        specs.append((f'idx_{table}_json_{slug}', wire))
+    return tuple(specs)
+
+
 def wire_path(cls: type[s.Seared], path: str) -> str:
     """Translate a declared dotted ``path`` into the one ``_payload`` actually uses.
 
@@ -200,5 +223,6 @@ __all__ = [
     'derive_columns',
     'table_name',
     'latest_table_name',
+    'json_index_specs',
     'wire_path',
 ]

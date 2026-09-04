@@ -214,3 +214,34 @@ def test_dialect_json_value_executes_on_this_engine():
         assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {missing} = ?', [5]) == []  # noqa: S608
     finally:
         backend.close()
+
+
+def _json_table(backend):
+    columns = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_issued_at': 'TIMESTAMP', '_payload': 'VARCHAR'}
+    backend.ensure_table('t', columns, ('_key_expr', '_ts_hlc'))
+
+
+def test_ensure_json_index_creates_and_is_idempotent():
+    backend = SQLiteBackend(':memory:')
+    try:
+        _json_table(backend)
+        backend.ensure_json_index('idx_t_json_zn_dept', 't', 'zn.department')
+        backend.ensure_json_index('idx_t_json_zn_dept', 't', 'zn.department')  # re-registration is a no-op
+        names = {r['name'] for r in backend.select(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 't'")}
+        assert 'idx_t_json_zn_dept' in names
+    finally:
+        backend.close()
+
+
+def test_ensure_json_index_appends_the_sort_key():
+    """One index serves the search *and* the ORDER BY — the sort columns follow the expression."""
+    backend = SQLiteBackend(':memory:')
+    try:
+        _json_table(backend)
+        backend.ensure_json_index('ix', 't', 'zn.department', ('_issued_at', '_ts_hlc', '_key_expr'))
+        (row,) = backend.select("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'ix'")
+        assert 'json_extract' in row['sql']
+        assert '"_issued_at", "_ts_hlc", "_key_expr"' in row['sql']
+    finally:
+        backend.close()
