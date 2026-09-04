@@ -39,6 +39,47 @@ def test_register_creates_stream(tmp_path):
         store.close()
 
 
+def test_register_accepts_seconds_and_timedeltas(tmp_path):
+    store = Store(str(tmp_path / 'c.duckdb'))
+    try:
+        stream = store.register(
+            Obs,
+            retention=datetime.timedelta(hours=36),
+            time_field='observed_at',
+            latest_key=('id',),
+            latest_retention=90 * 86400,
+        )
+        assert stream.retention == '129600s'
+        assert stream.latest_retention == '7776000s'
+    finally:
+        store.close()
+
+
+def test_register_rejects_bad_horizon_units(tmp_path):
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        with pytest.raises(ConfigError):
+            store.register(Msg, retention=-5)
+    finally:
+        store.close()
+
+
+def test_reads_return_the_queried_class(tmp_path):
+    """``query``/``latest`` answer with ``cls`` itself — the contract ``ty`` is told about."""
+    store = Store(str(tmp_path / 'c.duckdb'))
+    try:
+        store.register(Obs, time_field='observed_at', latest_key=('id',))
+        store.record(Obs, Obs(id=1, observed_at=1000.0))
+
+        rows = store.query(Obs)
+        assert [type(row) for row in rows] == [Obs]
+        newest = store.latest(Obs, id=1)
+        assert type(newest) is Obs
+        assert newest.observed_at == 1000.0
+    finally:
+        store.close()
+
+
 def test_record_and_query_round_trip(tmp_path):
     store = Store(str(tmp_path / 'c.duckdb'))
     try:

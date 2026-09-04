@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 import seared as s
 
@@ -25,6 +27,18 @@ def test_add_and_get():
     assert stream.retention == '7d'
     assert stream.index == ('id',)
     assert reg.all() == (stream,)
+
+
+def test_add_canonicalizes_horizon_units():
+    reg = StreamRegistry()
+    stream = reg.add(Msg, retention=datetime.timedelta(days=7), latest_key=('id',), latest_retention=86400)
+    assert stream.retention == '604800s'
+    assert stream.latest_retention == '86400s'
+
+
+def test_add_rejects_bad_horizon():
+    with pytest.raises(ValueError):
+        StreamRegistry().add(Msg, retention=-1)
 
 
 def test_duplicate_raises():

@@ -59,7 +59,7 @@ def test_synth_ts_is_unique():
 
 def test_rehydrate_round_trips():
     stream = _stream()
-    back = rehydrate(stream, build_row(stream, Msg(id=42, name='z'), None))
+    back = rehydrate(Msg, build_row(stream, Msg(id=42, name='z'), None))
     assert back.id == 42
     assert back.name == 'z'
 
