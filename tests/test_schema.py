@@ -49,3 +49,29 @@ def test_index_specs_without_dimensions_is_temporal_only():
     assert schema.index_specs('stream_sample', '_issued_at', ()) == (
         ('idx_stream_sample_time', ('_issued_at', '_ts_hlc', '_key_expr')),
     )
+
+
+@s.seared
+class Aliased(s.Seared):
+    zones: dict = s.Dict(data_key='zn', default_factory=dict)
+    name:  str  = s.Str(default='')
+
+
+def test_wire_path_passes_an_unaliased_head_through():
+    assert schema.wire_path(Aliased, 'name') == 'name'
+    assert schema.wire_path(Sample, 'id') == 'id'
+
+
+def test_wire_path_rewrites_an_aliased_head():
+    """``_payload`` is written in wire spelling, so the path has to be too."""
+    assert schema.wire_path(Aliased, 'zones.department') == 'zn.department'
+    assert schema.wire_path(Aliased, 'zones') == 'zn'
+
+
+def test_wire_path_rejects_an_unknown_head():
+    import pytest
+
+    from stored.errors import SchemaError
+
+    with pytest.raises(SchemaError, match='not a field'):
+        schema.wire_path(Aliased, 'nope.key')

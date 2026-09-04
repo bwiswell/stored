@@ -111,6 +111,7 @@ class Store:
         time_field: str | None = None,
         latest_key: tuple[str, ...] = (),
         latest_retention: Duration | None = None,
+        json_index: tuple[str, ...] = (),
     ) -> Stream:
         """Register a message class as a recorded stream and create its table(s).
 
@@ -128,6 +129,9 @@ class Store:
                 keeps one newest-wins row per key, read via :meth:`latest`.
             latest_retention: Retention horizon for the latest projection (usually
                 longer than ``retention``, same forms), or ``None`` to keep forever.
+            json_index: Dotted paths into ``Dict`` fields to make filterable via
+                ``where=`` — for keys that are open-ended by design (zone layers,
+                say) and so can never be columns.
 
         Returns:
             The registered :class:`Stream`.
@@ -141,7 +145,7 @@ class Store:
         latest_retention = _horizon(latest_retention)
         stream = self._registry.add(
             cls, retention=retention, archive=archive, index=index, time_field=time_field,
-            latest_key=latest_key, latest_retention=latest_retention,
+            latest_key=latest_key, latest_retention=latest_retention, json_index=json_index,
         )
         columns = schema.derive_columns(cls)
         with self._lock:
@@ -194,6 +198,7 @@ class Store:
         until: TimeBound = None,
         limit: int | None = None,
         order: str = 'asc',
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> list[M]:
         """Query stored history for ``cls`` (flushes pending writes first).
@@ -206,6 +211,8 @@ class Store:
             until: Upper time bound (same forms).
             limit: Maximum rows (defaults + clamps per the query planner).
             order: ``'asc'`` or ``'desc'`` by time.
+            where: Equality filters on declared ``json_index`` paths, e.g.
+                ``{'zones.department': 5}``.
             **filters: Equality filters on indexed field dimensions.
 
         Returns:
@@ -214,7 +221,7 @@ class Store:
         """
         stream = self._registry.get(cls)
         window = parse_window(since=since, until=until, limit=limit, order=order)
-        return self._select(cls, stream, stream.table, window, key or '', filters or None)
+        return self._select(cls, stream, stream.table, window, key or '', filters or None, where)
 
     def iter[M: s.Seared](  # noqa: A003 — the streaming sibling of ``query``
         self,
@@ -226,6 +233,7 @@ class Store:
         limit: int | None = None,
         order: str = 'asc',
         chunk: int = DEFAULT_CHUNK,
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> Generator[M]:
         """Stream stored history for ``cls`` in bounded memory.
@@ -255,6 +263,7 @@ class Store:
                 :meth:`query` there is no implicit cap — streaming is the point.
             order: ``'asc'`` or ``'desc'`` by time.
             chunk: Rows per page — the memory bound, not a row cap.
+            where: Equality filters on declared ``json_index`` paths.
             **filters: Equality filters on indexed field dimensions.
 
         Yields:
@@ -273,9 +282,9 @@ class Store:
         # Resolve the window once: a relative bound ('-1h') must not drift per page.
         window = parse_window(since=since, until=until, limit=chunk, order=order)
         self._writer.flush()
-        return self._pages(cls, stream, stream.table, window, key or '', filters or None, chunk, limit)
+        return self._pages(cls, stream, stream.table, window, key or '', filters or None, chunk, limit, where)
 
-    def _select[M: s.Seared](
+    def _select[M: s.Seared](  # noqa: PLR0913 — one argument per part of the read
         self,
         cls: type[M],
         stream: Stream,
@@ -283,9 +292,12 @@ class Store:
         window: Window,
         key_expr: str,
         filters: dict[str, Any] | None,
+        where: dict[str, Any] | None = None,
     ) -> list[M]:
         """Plan and run one read against ``table`` (flushes first — read-your-writes)."""
-        sql, params = plan(stream, key_expr, window, filters, table=table, dialect=self._backend.dialect)
+        sql, params = plan(
+            stream, key_expr, window, filters, where=where, table=table, dialect=self._backend.dialect,
+        )
         self._writer.flush()
         with self._lock:
             rows = self._backend.select(sql, params)
@@ -301,6 +313,7 @@ class Store:
         filters: dict[str, Any] | None,
         chunk: int,
         limit: int | None,
+        where: dict[str, Any] | None = None,
     ) -> Generator[M]:
         """Walk ``table`` page by page, resuming each from the previous page's last row."""
         remaining = limit
@@ -313,6 +326,7 @@ class Store:
                 key_expr,
                 replace(window, limit=size),
                 filters,
+                where=where,
                 after=anchor,
                 skip_null_time=True,
                 table=table,
@@ -340,6 +354,7 @@ class Store:
         until: TimeBound = None,
         limit: int | None = None,
         order: str = 'asc',
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> list[M]:
         """Query **current state**: the newest instance of every entity, filtered.
@@ -361,6 +376,8 @@ class Store:
             until: Upper bound on the same.
             limit: Maximum rows (defaults + clamps per the query planner).
             order: ``'asc'`` or ``'desc'`` by last-seen time.
+            where: Equality filters on declared ``json_index`` paths, e.g.
+                ``{'zones.department': 5}``.
             **filters: Equality filters on indexed field dimensions.
 
         Returns:
@@ -371,7 +388,7 @@ class Store:
         """
         stream = self._require_latest(cls, 'query_latest')
         window = parse_window(since=since, until=until, limit=limit, order=order)
-        return self._select(cls, stream, stream.latest_table, window, key or '', filters or None)
+        return self._select(cls, stream, stream.latest_table, window, key or '', filters or None, where)
 
     def iter_latest[M: s.Seared](
         self,
@@ -383,6 +400,7 @@ class Store:
         limit: int | None = None,
         order: str = 'asc',
         chunk: int = DEFAULT_CHUNK,
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> Generator[M]:
         """Stream current state in bounded memory — :meth:`query_latest`, paged.
@@ -400,6 +418,7 @@ class Store:
             limit: Maximum rows in total, or ``None`` for every match.
             order: ``'asc'`` or ``'desc'`` by last-seen time.
             chunk: Rows per page — the memory bound, not a row cap.
+            where: Equality filters on declared ``json_index`` paths.
             **filters: Equality filters on indexed field dimensions.
 
         Yields:
@@ -417,7 +436,9 @@ class Store:
         stream = self._require_latest(cls, 'iter_latest')
         window = parse_window(since=since, until=until, limit=chunk, order=order)
         self._writer.flush()
-        return self._pages(cls, stream, stream.latest_table, window, key or '', filters or None, chunk, limit)
+        return self._pages(
+            cls, stream, stream.latest_table, window, key or '', filters or None, chunk, limit, where,
+        )
 
     def _require_latest(self, cls: type[s.Seared], what: str) -> Stream:
         """The stream for ``cls``, or a clear error when it keeps no latest projection."""

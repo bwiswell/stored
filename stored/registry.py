@@ -34,6 +34,9 @@ class Stream:
         latest_retention: Retention horizon for the latest projection (usually longer
             than ``retention``), canonicalized as ``retention`` is, or ``None`` to
             keep forever.
+        json_paths: Declared path → the same path in payload (wire) spelling. The
+            filterable paths *inside* a ``Dict`` field, for the fields whose keys are
+            open-ended by design and so can never be columns.
     """
 
     cls: type[s.Seared]
@@ -44,6 +47,7 @@ class Stream:
     time_field: str | None = None
     latest_key: tuple[str, ...] = field(default_factory=tuple)
     latest_retention: str | None = None
+    json_paths: dict[str, str] = field(default_factory=dict)
 
     @property
     def time_column(self) -> str:
@@ -102,6 +106,40 @@ def _validate_latest_key(cls: type[s.Seared], latest_key: tuple[str, ...]) -> No
             )
 
 
+def _validate_json_index(cls: type[s.Seared], json_index: tuple[str, ...]) -> dict[str, str]:
+    """Check every declared path reaches into a ``Dict`` field, and translate it.
+
+    Args:
+        cls: The class being registered.
+        json_index: Declared dotted paths, e.g. ``('zones.department',)``.
+
+    Returns:
+        ``{declared path: wire path}`` — what the planner needs at query time.
+
+    Raises:
+        RegistrationError: If a path's head is not a ``Dict`` field of ``cls``, or
+            the path names only that field rather than something inside it.
+    """
+    kinds = {attr: type(fld).__name__ for attr, _wire, fld in cls.__seared_fields__}
+    paths: dict[str, str] = {}
+    for path in json_index:
+        head, _, tail = path.partition('.')
+        if head not in kinds:
+            raise RegistrationError(f'json_index {path!r}: {head!r} is not a field of {cls.__name__}')
+        if kinds[head] != 'Dict':
+            raise RegistrationError(
+                f'json_index {path!r}: {head!r} is a {kinds[head]} field of {cls.__name__}; '
+                'a path may only reach into a Dict',
+            )
+        if not tail:
+            raise RegistrationError(
+                f'json_index {path!r} names the whole {head!r} dict; '
+                'give a key inside it, e.g. {head}.<key>'.format(head=head),
+            )
+        paths[path] = schema.wire_path(cls, path)
+    return paths
+
+
 class StreamRegistry:
     """An ordered collection of :class:`Stream` keyed by message class."""
 
@@ -120,6 +158,7 @@ class StreamRegistry:
         time_field: str | None = None,
         latest_key: tuple[str, ...] = (),
         latest_retention: Duration | None = None,
+        json_index: tuple[str, ...] = (),
     ) -> Stream:
         """Register ``cls`` as a stream and return the :class:`Stream`.
 
@@ -133,6 +172,8 @@ class StreamRegistry:
             latest_key: Field names forming a latest-per-key projection's logical key.
             latest_retention: Retention horizon for the latest projection (same
                 forms), or ``None``.
+            json_index: Dotted paths into ``Dict`` fields to make filterable, e.g.
+                ``('zones.department',)``.
 
         Raises:
             RegistrationError: If ``cls`` is not a seared class, is already
@@ -148,6 +189,7 @@ class StreamRegistry:
             _validate_time_field(cls, time_field)
         if latest_key:
             _validate_latest_key(cls, tuple(latest_key))
+        json_paths = _validate_json_index(cls, tuple(json_index))
         stream = Stream(
             cls=cls,
             table=schema.table_name(cls),
@@ -157,6 +199,7 @@ class StreamRegistry:
             time_field=time_field,
             latest_key=tuple(latest_key),
             latest_retention=duration_text(latest_retention) if latest_retention is not None else None,
+            json_paths=json_paths,
         )
         self._by_cls[cls] = stream
         return stream

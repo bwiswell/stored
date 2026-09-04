@@ -115,6 +115,34 @@ migration is a manual step. Each row keeps its `_schema` tag, so mixed-schema
 history is self-describing. `stored migrate` re-runs the reconcile for every
 configured stream.
 
+## Reaching into a `dict`
+
+A complex field has no column — it round-trips through `_payload` only — which
+normally puts it out of the query planner's reach. Some of them have **open-ended
+keys by design** (`Location.zones` is `{layer: zone_id}`, and the layers belong to
+the deployment), so promoting them to columns is not an option even in principle.
+
+Declaring a path makes one filterable:
+
+```python
+store.register(Location, json_index=('zones.department',), …)
+store.query_latest(Location, where={'zones.department': 5})
+```
+
+Three things the declaration buys:
+
+- **Validation at registration.** The head must name a `Dict` field of the class and
+  the path must reach *inside* it, so a typo is a `RegistrationError` at open time
+  rather than a filter that silently matches nothing.
+- **Wire-name translation.** `_payload` is written with each field's wire name, so a
+  field carrying `data_key='zn'` stores `{"zn": …}` while the caller still writes
+  `zones.department`. `stored` rewrites the head; getting this wrong is the silent
+  failure the declaration exists to prevent.
+- **An allow-list.** `where=` accepts only declared paths, exactly as `**filters`
+  accepts only declared dimensions.
+
+A row whose dict lacks the key simply does not match. Equality only, for now.
+
 ## Indexes
 
 Beyond the `(_key_expr, _ts_hlc)` primary key, `register` emits two kinds of
