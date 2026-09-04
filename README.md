@@ -17,7 +17,8 @@ sister that remembers.
   historical, properly-typed instances over a queryable.
 - **Last-known, not just history.** Register a `latest_key` and `stored` keeps a
   newest-per-entity projection alongside the log — a durable "last value however
-  old," on its own longer retention, read with `store.latest(cls, **key)`.
+  old," on its own longer retention. Read one entity with `store.latest(cls, **key)`,
+  or the whole population with `store.query_latest(cls, …)` / `iter_latest`.
 - **Event-time aware.** Point a stream at a payload timestamp (`time_field`) and
   retention, range queries, and last-known key off **when it happened**, not when
   the mesh delivered it.
@@ -63,6 +64,8 @@ newest  = store.latest(Telemetry, id=7)                  # → Telemetry | None,
 for row in store.iter(Telemetry, since='-30d'):          # streamed, uncapped
     ...                                                  # a page in memory at a time
 
+current = store.query_latest(Telemetry, since='-1h')     # every entity's newest, filtered
+
 store.flush(); store.prune(); store.close()
 ```
 
@@ -72,6 +75,12 @@ always see prior writes. Reads are **typed on the class you ask for** —
 `Telemetry | None` to a type checker, with no cast at the call site. Retention
 horizons accept the duration grammar (`'7d'`), a number of seconds, or a
 `datetime.timedelta`.
+
+`query`/`iter` read the **history** table; `query_latest`/`iter_latest` read the
+**latest projection** — one row per entity instead of one per observation, for the
+"where is everything right now" question. The projection carries the same columns and
+sort key, so filters, ordering, paging and indexes work identically on both; on it,
+`since`/`until` mean *last seen* in that window.
 
 `query` returns one list (capped, and the right shape for a request/reply). `iter`
 **streams** the same window a page at a time, for windows larger than memory: it

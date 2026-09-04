@@ -128,7 +128,10 @@ secondary index — and deliberately no more:
   which a composite's leading-column rule would not serve).
 
 `_key_expr` equality needs no index of its own — it leads the primary key, whose
-unique index already serves it. The cost is write amplification on the append
+unique index already serves it. The same specs are emitted for the **latest
+projection**, which `query_latest`/`iter_latest` read, minus any dimension the
+entity key already leads (a filter on the first `latest_key` field is served by that
+table's own primary-key index). The cost is write amplification on the append
 path, which is why the set is small and every extra index is opt-in via `index=`.
 Emission is idempotent (`CREATE INDEX IF NOT EXISTS`), so an existing store gains
 them on the next `register`/`migrate`.

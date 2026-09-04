@@ -1,6 +1,6 @@
 [project]
 name = "stored"
-version = "0.2.11"
+version = "0.2.12"
 description = "A zeared-native persistence layer and Zenoh chronicler"
 authors = [
     { name = "Benj Wiswell", email = "benjwiswell@gmail.com" },

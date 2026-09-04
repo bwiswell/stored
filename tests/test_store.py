@@ -17,6 +17,7 @@ class Msg(s.Seared):
 class Obs(s.Seared):
     id:          int   = s.Int(required=True)
     observed_at: float = s.Float(required=True)
+    label:       str   = s.Str(default='')
 
 
 @s.seared
@@ -367,5 +368,99 @@ def test_iter_and_indexes_on_the_duckdb_backend(tmp_path):
             for row in store._backend.select("SELECT index_name FROM duckdb_indexes() WHERE table_name = 'stream_msg'")
         }
         assert {'idx_stream_msg_time', 'idx_stream_msg_id'} <= names
+    finally:
+        store.close()
+
+
+# -- current state (the projection read) -------------------------------------
+
+def _population(tmp_path, count=6):
+    """A store whose latest projection holds one row per entity."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+    for i in range(count):
+        store.record(Obs, Obs(id=i, observed_at=1000.0 + i))
+        store.record(Obs, Obs(id=i, observed_at=2000.0 + i))  # a newer observation per entity
+    store.flush()
+    return store
+
+
+def test_query_latest_answers_one_row_per_entity(tmp_path):
+    """The population question: everything's current state, not every observation."""
+    store = _population(tmp_path)
+    try:
+        rows = store.query_latest(Obs)
+        assert [r.id for r in rows] == list(range(6))
+        assert all(r.observed_at >= 2000.0 for r in rows)  # the newest per entity
+        assert len(store.query(Obs, limit=100)) == 12  # …where history kept both
+    finally:
+        store.close()
+
+
+def test_query_latest_filters_and_caps(tmp_path):
+    store = _population(tmp_path)
+    try:
+        assert [r.id for r in store.query_latest(Obs, id=3)] == [3]
+        assert len(store.query_latest(Obs, limit=2)) == 2
+        assert [r.id for r in store.query_latest(Obs, order='desc')] == list(reversed(range(6)))
+    finally:
+        store.close()
+
+
+def test_query_latest_window_means_last_seen(tmp_path):
+    """``since`` on the projection asks when the entity was last seen, not when it was recorded."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+        store.record(Obs, Obs(id=1, observed_at=1000.0))  # stale entity
+        store.record(Obs, Obs(id=2, observed_at=9000.0))  # recently seen
+        store.flush()
+
+        assert [r.id for r in store.query_latest(Obs, since=5000.0)] == [2]
+        assert [r.id for r in store.query_latest(Obs, until=5000.0)] == [1]
+    finally:
+        store.close()
+
+
+def test_iter_latest_pages_through_the_population(tmp_path):
+    store = _population(tmp_path, count=20)
+    counting = _CountingBackend(store._backend)
+    store._backend = counting
+    try:
+        walk = store.iter_latest(Obs, chunk=5)
+        assert next(walk).id == 0
+        assert counting.selects == 1  # a page, not the population
+        assert [row.id for row in walk] == list(range(1, 20))
+    finally:
+        store._backend = counting.inner
+        store.close()
+
+
+def test_projection_reads_need_a_projection(tmp_path):
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        store.register(Msg, index=('id',))  # no latest_key
+        with pytest.raises(ConfigError, match='needs a latest projection'):
+            store.query_latest(Msg)
+        with pytest.raises(ConfigError, match='needs a latest projection'):
+            store.iter_latest(Msg)
+    finally:
+        store.close()
+
+
+def test_projection_is_indexed_for_the_queries_that_read_it(tmp_path):
+    """A filtered snapshot should not scan — and a dimension the entity key leads needs no index."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        store.register(Obs, index=('id', 'label'), time_field='observed_at', latest_key=('id',))
+        names = {
+            row['name']
+            for row in store._backend.select(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'latest_obs'",
+            )
+        }
+        assert 'idx_latest_obs_time' in names
+        assert 'idx_latest_obs_label' in names
+        assert 'idx_latest_obs_id' not in names  # `id` leads the latest key's own index
     finally:
         store.close()
