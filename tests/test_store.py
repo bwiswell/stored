@@ -9,27 +9,27 @@ from stored.errors import ConfigError, QueryError
 
 @s.seared
 class Msg(s.Seared):
-    id:   int = s.Int(required=True)
+    id: int = s.Int(required=True)
     name: str = s.Str(default='')
 
 
 @s.seared
 class Obs(s.Seared):
-    id:          int   = s.Int(required=True)
+    id: int = s.Int(required=True)
     observed_at: float = s.Float(required=True)
-    label:       str   = s.Str(default='')
+    label: str = s.Str(default='')
 
 
 @s.seared
 class Nullable(s.Seared):
-    id:          int           = s.Int(required=True)
-    observed_at: float | None  = s.Float(default=None)
+    id: int = s.Int(required=True)
+    observed_at: float | None = s.Float(default=None)
 
 
 @s.seared
 class Zoned(s.Seared):
-    id:          int   = s.Int(required=True)
-    zones:       dict  = s.Dict(data_key='zn', default_factory=dict)  # aliased on the wire
+    id: int = s.Int(required=True)
+    zones: dict = s.Dict(data_key='zn', default_factory=dict)  # aliased on the wire
     observed_at: float = s.Float(required=True)
 
 
@@ -143,7 +143,7 @@ def test_query_range_keys_on_event_time(tmp_path):
         store.register(Obs, index=('id',), time_field='observed_at')
         now = datetime.datetime.now(datetime.UTC).timestamp()
         store.record(Obs, Obs(id=1, observed_at=now - 7200))  # 2h ago
-        store.record(Obs, Obs(id=2, observed_at=now - 60))    # 1m ago
+        store.record(Obs, Obs(id=2, observed_at=now - 60))  # 1m ago
 
         recent = store.query(Obs, since='-1h')
         assert [r.id for r in recent] == [2]
@@ -157,8 +157,8 @@ def test_latest_returns_newest_per_key(tmp_path):
         store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
         now = datetime.datetime.now(datetime.UTC).timestamp()
         store.record(Obs, Obs(id=1, observed_at=now - 100))
-        store.record(Obs, Obs(id=1, observed_at=now))        # newest for id=1
-        store.record(Obs, Obs(id=1, observed_at=now - 50))   # out of order, older -> ignored
+        store.record(Obs, Obs(id=1, observed_at=now))  # newest for id=1
+        store.record(Obs, Obs(id=1, observed_at=now - 50))  # out of order, older -> ignored
         store.record(Obs, Obs(id=2, observed_at=now - 10))
 
         assert store.latest(Obs, id=1).observed_at == now
@@ -381,6 +381,7 @@ def test_iter_and_indexes_on_the_duckdb_backend(tmp_path):
 
 # -- current state (the projection read) -------------------------------------
 
+
 def _population(tmp_path, count=6):
     """A store whose latest projection holds one row per entity."""
     store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
@@ -475,12 +476,16 @@ def test_projection_is_indexed_for_the_queries_that_read_it(tmp_path):
 
 # -- path filters (into a Dict field) ----------------------------------------
 
+
 def _zoned(tmp_path):
     """Four entities across three zones, recorded twice each."""
     store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
     store.register(
-        Zoned, index=('id',), time_field='observed_at',
-        latest_key=('id',), json_index=('zones.department',),
+        Zoned,
+        index=('id',),
+        time_field='observed_at',
+        latest_key=('id',),
+        json_index=('zones.department',),
     )
     for i, dept in enumerate([5, 6, 5, 7]):
         store.record(Zoned, Zoned(id=i, zones={'department': dept}, observed_at=1000.0 + i))
@@ -567,7 +572,13 @@ def _query_plan(store, stream, filters=None, *, table=None, **kwargs):
     from stored.query import parse_window, plan
 
     sql, params = plan(
-        stream, '', parse_window(), filters, table=table, dialect=store._backend.dialect, **kwargs,
+        stream,
+        '',
+        parse_window(),
+        filters,
+        table=table,
+        dialect=store._backend.dialect,
+        **kwargs,
     )
     return [row['detail'] for row in store._backend.select('EXPLAIN QUERY PLAN ' + sql, params)]
 

@@ -11,6 +11,7 @@ name resolves on first access, so a Store-only ``import stored`` never pulls in
 ``zeared`` / ``zenoh`` at import time. It also remains available under its own
 namespace as :class:`stored.zenoh.Chronicler`.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -30,20 +31,20 @@ from .store import Store
 if TYPE_CHECKING:
     from .zenoh import Chronicler
 
-__version__ = '0.2.16'
+__version__ = '0.2.17'
 
 __all__ = [
-    'Store',
+    'BackendError',
     'Chronicler',
-    'StoredConfig',
-    'StreamSpec',
-    'StoredError',
     'ConfigError',
+    'QueryError',
     'RegistrationError',
     'SchemaError',
-    'BackendError',
+    'Store',
+    'StoredConfig',
+    'StoredError',
+    'StreamSpec',
     'WriterError',
-    'QueryError',
     '__version__',
 ]
 
@@ -58,4 +59,5 @@ def __getattr__(name: str) -> object:
         from .zenoh import Chronicler
 
         return Chronicler
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+    msg = f'module {__name__!r} has no attribute {name!r}'
+    raise AttributeError(msg)

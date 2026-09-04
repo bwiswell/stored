@@ -3,6 +3,7 @@
 All errors raised by the package derive from :class:`StoredError`, so callers
 can ``except StoredError`` to catch anything the persistence layer throws.
 """
+
 from __future__ import annotations
 
 
@@ -35,11 +36,11 @@ class QueryError(StoredError):
 
 
 __all__ = [
-    'StoredError',
+    'BackendError',
     'ConfigError',
+    'QueryError',
     'RegistrationError',
     'SchemaError',
-    'BackendError',
+    'StoredError',
     'WriterError',
-    'QueryError',
 ]

@@ -9,14 +9,14 @@ from stored.mesh import AsyncStore
 
 @s.seared
 class Msg(s.Seared):
-    id:   int = s.Int(required=True)
+    id: int = s.Int(required=True)
     name: str = s.Str(default='')
 
 
 @s.seared
 class Zoned(s.Seared):
-    id:          int   = s.Int(required=True)
-    zones:       dict  = s.Dict(data_key='zn', default_factory=dict)
+    id: int = s.Int(required=True)
+    zones: dict = s.Dict(data_key='zn', default_factory=dict)
     observed_at: float = s.Float(required=True)
 
 
@@ -70,7 +70,7 @@ async def test_iter_yields_the_loop_between_pages(tmp_path):
 
         async def ticker():
             nonlocal ticks
-            while True:  # noqa: ASYNC110 — a cooperative-scheduling probe, not a poll
+            while True:
                 await asyncio.sleep(0)
                 ticks += 1
 
@@ -111,8 +111,8 @@ async def test_iter_flushes_when_iteration_starts(tmp_path):
     try:
         store.register(Msg, index=('id',))
         store.record(Msg, Msg(id=1))
-        walk = store.iter(Msg)              # nothing has run yet
-        store.record(Msg, Msg(id=2))        # …so this is still ahead of the flush
+        walk = store.iter(Msg)  # nothing has run yet
+        store.record(Msg, Msg(id=2))  # …so this is still ahead of the flush
         assert [m.id async for m in walk] == [1, 2]
     finally:
         await store.close()
@@ -164,8 +164,9 @@ async def test_path_filters_reach_the_async_reads(tmp_path):
     """The console asks from a service, so `where=` has to survive the facade."""
     store = _astore(tmp_path)
     try:
-        store.register(Zoned, index=('id',), time_field='observed_at',
-                       latest_key=('id',), json_index=('zones.department',))
+        store.register(
+            Zoned, index=('id',), time_field='observed_at', latest_key=('id',), json_index=('zones.department',)
+        )
         for i, dept in enumerate([5, 6, 5]):
             store.record(Zoned, Zoned(id=i, zones={'department': dept}, observed_at=1000.0 + i))
         await store.flush()

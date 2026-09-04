@@ -14,16 +14,16 @@ class Msg(s.Seared):
 
 @s.seared
 class Zoned(s.Seared):
-    id:    int  = s.Int(required=True)
+    id: int = s.Int(required=True)
     zones: dict = s.Dict(data_key='zn', default_factory=dict)
-    label: str  = s.Str(default='')
+    label: str = s.Str(default='')
 
 
 @s.seared
 class Obs(s.Seared):
-    id:          int   = s.Int(required=True)
+    id: int = s.Int(required=True)
     observed_at: float = s.Float(required=True)
-    label:       str   = s.Str(default='')
+    label: str = s.Str(default='')
 
 
 def test_add_and_get():

@@ -18,6 +18,7 @@ def wait(seconds: float = 0.2):
 
 # -- stream resolution ----------------------------------------------------
 
+
 def test_resolve_ok():
     assert _resolve(StreamSpec.load({'cls': '_support_messages:Beacon'})) is Beacon
 
@@ -39,6 +40,7 @@ def test_resolve_rejects_missing_module():
 
 # -- sd_notify ------------------------------------------------------------
 
+
 def test_sd_notify_noop_without_socket(monkeypatch):
     monkeypatch.delenv('NOTIFY_SOCKET', raising=False)
     _sd_notify('READY=1')  # must not raise
@@ -46,13 +48,16 @@ def test_sd_notify_noop_without_socket(monkeypatch):
 
 # -- daemon lifecycle (injected session + store) --------------------------
 
+
 def _config():
-    return StoredConfig.load({
-        'identity': 'd1',
-        'zenoh': {'mode': 'peer'},
-        'streams': [{'cls': '_support_messages:Beacon', 'retention': '7d'}],
-        'prune_interval': 0,
-    })
+    return StoredConfig.load(
+        {
+            'identity': 'd1',
+            'zenoh': {'mode': 'peer'},
+            'streams': [{'cls': '_support_messages:Beacon', 'retention': '7d'}],
+            'prune_interval': 0,
+        }
+    )
 
 
 def test_daemon_records_and_serves(session):

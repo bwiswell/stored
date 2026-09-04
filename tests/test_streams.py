@@ -6,6 +6,7 @@ SQLite core with no ``zenoh`` extra installed. They use a plain ``seared`` class
 resolver would reject — precisely to prove the storage core does not require a mesh
 ``Message`` (see ``tests/zenoh/test_daemon.py`` for the Message-level checks).
 """
+
 import pytest
 
 from stored import Store, StoredConfig
@@ -35,10 +36,12 @@ def test_resolve_rejects_missing_module():
 
 
 def test_register_streams_creates_table_and_retention(tmp_path):
-    config = StoredConfig.load({
-        'identity': 'x',
-        'streams': [{'cls': 'stored.config:StoredConfig', 'retention': '7d'}],
-    })
+    config = StoredConfig.load(
+        {
+            'identity': 'x',
+            'streams': [{'cls': 'stored.config:StoredConfig', 'retention': '7d'}],
+        }
+    )
     store = Store(str(tmp_path / 'c.db'))
     try:
         register_streams(store, config)
@@ -48,13 +51,17 @@ def test_register_streams_creates_table_and_retention(tmp_path):
 
 
 def test_register_streams_wires_latest_projection(tmp_path):
-    config = StoredConfig.load({
-        'identity': 'x',
-        'streams': [{
-            'cls': 'stored.config:StoredConfig',
-            'latest': {'key': ['identity'], 'retention': '30d'},
-        }],
-    })
+    config = StoredConfig.load(
+        {
+            'identity': 'x',
+            'streams': [
+                {
+                    'cls': 'stored.config:StoredConfig',
+                    'latest': {'key': ['identity'], 'retention': '30d'},
+                }
+            ],
+        }
+    )
     store = Store(str(tmp_path / 'c.db'))
     try:
         register_streams(store, config)

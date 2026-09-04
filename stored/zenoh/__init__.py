@@ -6,6 +6,7 @@ always imports. It wires the seared-only core's :class:`~stored.store.Store` to 
 imports no ``zeared`` at runtime — a Store-only ``import stored`` stays
 transport-free (the top-level ``Chronicler`` re-export is lazy).
 """
+
 from __future__ import annotations
 
 from .chronicler import Chronicler

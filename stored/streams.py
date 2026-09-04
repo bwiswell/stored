@@ -7,15 +7,19 @@ the store records ``seared`` objects, and the mesh-only ``zeared.Message`` disti
 (a topic to publish/serve on) is the chronicler's concern, not storage's. So
 ``migrate``/``prune`` run against the pure storage core, importing no ``zeared``.
 """
+
 from __future__ import annotations
 
 import importlib
+from typing import TYPE_CHECKING
 
 import seared as s
 
-from .config import StoredConfig, StreamSpec
 from .errors import ConfigError
-from .store import Store
+
+if TYPE_CHECKING:
+    from .config import StoredConfig, StreamSpec
+    from .store import Store
 
 
 def resolve_stream_class(spec: StreamSpec) -> type[s.Seared]:
@@ -32,14 +36,17 @@ def resolve_stream_class(spec: StreamSpec) -> type[s.Seared]:
     """
     module_path, sep, cls_name = spec.cls.partition(':')
     if not sep or not module_path or not cls_name:
-        raise ConfigError(f"stream cls {spec.cls!r} must be 'module:ClassName'")
+        msg = f"stream cls {spec.cls!r} must be 'module:ClassName'"
+        raise ConfigError(msg)
     try:
         module = importlib.import_module(module_path)
         obj = getattr(module, cls_name)
     except (ImportError, AttributeError) as exc:
-        raise ConfigError(f'cannot import stream class {spec.cls!r}: {exc}') from exc
+        msg = f'cannot import stream class {spec.cls!r}: {exc}'
+        raise ConfigError(msg) from exc
     if not (isinstance(obj, type) and issubclass(obj, s.Seared)):
-        raise ConfigError(f'stream cls {spec.cls!r} is not a seared class')
+        msg = f'stream cls {spec.cls!r} is not a seared class'
+        raise ConfigError(msg)
     return obj
 
 
@@ -62,4 +69,4 @@ def register_streams(store: Store, config: StoredConfig) -> None:
         )
 
 
-__all__ = ['resolve_stream_class', 'register_streams']
+__all__ = ['register_streams', 'resolve_stream_class']

@@ -5,9 +5,9 @@ from stored import schema
 
 @s.seared
 class Sample(s.Seared):
-    id:   int   = s.Int(required=True)
-    name: str   = s.Str(default='')
-    x:    float = s.Float(default=0.0)
+    id: int = s.Int(required=True)
+    name: str = s.Str(default='')
+    x: float = s.Float(default=0.0)
 
 
 def test_table_name_snake_cases():
@@ -54,7 +54,7 @@ def test_index_specs_without_dimensions_is_temporal_only():
 @s.seared
 class Aliased(s.Seared):
     zones: dict = s.Dict(data_key='zn', default_factory=dict)
-    name:  str  = s.Str(default='')
+    name: str = s.Str(default='')
 
 
 def test_wire_path_passes_an_unaliased_head_through():

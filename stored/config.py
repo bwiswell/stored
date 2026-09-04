@@ -5,6 +5,7 @@ environment (12-factor) with an optional TOML file for local/dev convenience
 (``StoredConfig.from_toml`` is auto-attached by seared). No ``pydantic`` — the
 serializer is the config layer, per the workspace convention.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,8 +30,12 @@ class LatestSpec(s.Seared):
             stream's history ``retention``); ``None`` keeps it forever.
     """
 
+    # fmt: off
+    # Column-aligned deliberately: this block *is* the config contract, and reads as a
+    # table of it. The formatter would collapse the columns.
     key:       list       = s.Str(many=True, default_factory=list)
     retention: str | None = s.Str(default=None)
+    # fmt: on
 
 
 @s.seared
@@ -50,12 +55,16 @@ class StreamSpec(s.Seared):
         latest: A latest-per-key projection, or ``None`` for history only.
     """
 
+    # fmt: off
+    # Column-aligned deliberately: this block *is* the config contract, and reads as a
+    # table of it. The formatter would collapse the columns.
     cls:        str               = s.Str(required=True)
     retention:  str | None        = s.Str(default=None)
     archive:    str | None        = s.Str(default=None)
     index:      list              = s.Str(many=True, default_factory=list)
     time_field: str | None        = s.Str(default=None)
     latest:     LatestSpec | None = s.T(LatestSpec, default=None)
+    # fmt: on
 
 
 @s.seared
@@ -75,6 +84,9 @@ class StoredConfig(s.Seared):
         log_level: Root logging level name.
     """
 
+    # fmt: off
+    # Column-aligned deliberately: this block *is* the config contract, and reads as a
+    # table of it. The formatter would collapse the columns.
     db_path:        str   = s.Str(default='chronicle.db')
     backend:        str   = s.Str(default='sqlite')
     streams:        list  = s.T(StreamSpec, many=True, default_factory=list)
@@ -84,6 +96,7 @@ class StoredConfig(s.Seared):
     flush_secs:     float = s.Float(default=1.0)
     prune_interval: float = s.Float(default=300.0)
     log_level:      str   = s.Str(default='INFO')
+    # fmt: on
 
     @classmethod
     def from_env(cls, prefix: str = _ENV_PREFIX_DEFAULT) -> StoredConfig:
@@ -120,4 +133,4 @@ class StoredConfig(s.Seared):
         return cls.load(data)
 
 
-__all__ = ['StoredConfig', 'StreamSpec', 'LatestSpec']
+__all__ = ['LatestSpec', 'StoredConfig', 'StreamSpec']

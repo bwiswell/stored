@@ -6,17 +6,20 @@ SELECT against a stream table, ordered by the stream's temporal axis
 ``_issued_at``; then ``_ts_hlc`` as a stable tiebreaker). Used by both the Python
 ``Store.query`` surface and the mesh ``on_query`` serve path.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._time import to_naive_utc, utcnow
 from .dialect import DEFAULT_DIALECT, Dialect
 from .errors import QueryError
-from .registry import Stream
+
+if TYPE_CHECKING:
+    from .registry import Stream
 
 #: What a query time bound may be: a relative/ISO string, unix epoch seconds, a
 #: ``datetime``, or ``None`` (open bound). Numeric/datetime bounds let a service map
@@ -104,11 +107,59 @@ def parse_window(
         start = _resolve_time(since, now)
         end = _resolve_time(until, now)
     except ValueError as exc:
-        raise QueryError(f'invalid time bound: {exc}') from exc
+        msg = f'invalid time bound: {exc}'
+        raise QueryError(msg) from exc
     resolved = DEFAULT_LIMIT if limit is None else min(int(limit), MAX_LIMIT)
     if resolved < 0:
-        raise QueryError(f'limit must be non-negative, got {resolved}')
+        msg = f'limit must be non-negative, got {resolved}'
+        raise QueryError(msg)
     return Window(start=start, end=end, limit=resolved, ascending=order.lower() != 'desc')
+
+
+def _equality_clauses(
+    stream: Stream,
+    filters: dict[str, Any] | None,
+    where: dict[str, Any] | None,
+    dialect: Dialect,
+) -> list[tuple[str, Any]]:
+    """Build the equality predicates: indexed columns, then declared JSON paths.
+
+    Both are allow-listed against what the stream declared, so a name that reaches here
+    unrecognized is a caller error rather than an unfiltered read.
+
+    Args:
+        stream: The stream being queried.
+        filters: Column equality filters, or ``None``.
+        where: Path equality filters, or ``None``.
+        dialect: How this engine spells a JSON extraction.
+
+    Returns:
+        ``(sql fragment, bound value)`` pairs, in the order they should be applied.
+
+    Raises:
+        QueryError: If a filter names a non-indexed field, or a path is undeclared.
+    """
+    built: list[tuple[str, Any]] = []
+    for name, value in (filters or {}).items():
+        if name not in set(stream.index):
+            msg = (
+                f'filter {name!r} is not an indexed dimension of '
+                f'{stream.cls.__name__} (indexed: {sorted(stream.index)})'
+            )
+            raise QueryError(msg)
+        built.append((f'"{name}" = ?', value))
+    for path, value in (where or {}).items():
+        wire = stream.json_paths.get(path)
+        if wire is None:
+            msg = (
+                f'path {path!r} is not a declared json_index of '
+                f'{stream.cls.__name__} (declared: {sorted(stream.json_paths)})'
+            )
+            raise QueryError(msg)
+        # The extractor depends on the value's type: DuckDB's json_extract returns
+        # JSON, which will not compare against a bound string.
+        built.append((f'{dialect.json_value("_payload", wire, text=isinstance(value, str))} = ?', value))
+    return built
 
 
 def plan(
@@ -175,38 +226,18 @@ def plan(
         comparison = '>' if window.ascending else '<'
         clauses.append(f'("{time_col}", "_ts_hlc", "_key_expr") {comparison} (?, ?, ?)')
         params.extend(after)
-    if filters:
-        allowed = set(stream.index)
-        for name, value in filters.items():
-            if name not in allowed:
-                raise QueryError(
-                    f'filter {name!r} is not an indexed dimension of '
-                    f'{stream.cls.__name__} (indexed: {sorted(allowed)})',
-                )
-            clauses.append(f'"{name}" = ?')
-            params.append(value)
-
-    if where:
-        for path, value in where.items():
-            wire = stream.json_paths.get(path)
-            if wire is None:
-                raise QueryError(
-                    f'path {path!r} is not a declared json_index of '
-                    f'{stream.cls.__name__} (declared: {sorted(stream.json_paths)})',
-                )
-            # The extractor depends on the value's type: DuckDB's json_extract
-            # returns JSON, which will not compare against a bound string.
-            clauses.append(f'{dialect.json_value("_payload", wire, text=isinstance(value, str))} = ?')
-            params.append(value)
+    for clause_sql, value in _equality_clauses(stream, filters, where, dialect):
+        clauses.append(clause_sql)
+        params.append(value)
 
     clause = f' WHERE {" AND ".join(clauses)}' if clauses else ''
     direction = 'ASC' if window.ascending else 'DESC'
     sql = (
-        f'SELECT * FROM "{table or stream.table}"{clause} '
+        f'SELECT * FROM "{table or stream.table}"{clause} '  # noqa: S608 (identifiers are quoted; values are bound)
         f'ORDER BY "{time_col}" {direction}, "_ts_hlc" {direction}, "_key_expr" {direction} '
         f'LIMIT {int(window.limit)}'
     )
     return sql, params
 
 
-__all__ = ['Anchor', 'Window', 'TimeBound', 'parse_window', 'plan', 'DEFAULT_CHUNK', 'DEFAULT_LIMIT', 'MAX_LIMIT']
+__all__ = ['DEFAULT_CHUNK', 'DEFAULT_LIMIT', 'MAX_LIMIT', 'Anchor', 'TimeBound', 'Window', 'parse_window', 'plan']

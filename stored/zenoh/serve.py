@@ -8,14 +8,18 @@ over the queried key expression, and streams each historical row back with
 Only **non-RETAINED** classes can be served this way — zeared forbids
 ``on_query`` on a RETAINED class (retention already owns a queryable there).
 """
+
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..errors import QueryError
-from ..registry import Stream
-from ..store import Store
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ..registry import Stream
+    from ..store import Store
 
 
 def make_query_handler(store: Store, stream: Stream) -> Callable[[Any], None]:

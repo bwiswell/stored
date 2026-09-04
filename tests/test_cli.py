@@ -17,10 +17,7 @@ def test_migrate_creates_tables(tmp_path, capsys):
     db = tmp_path / 'c.db'
     toml = tmp_path / 'c.toml'
     toml.write_text(
-        'identity = "x"\n'
-        f'db_path = "{db}"\n'
-        '[[streams]]\n'
-        'cls = "stored.config:StoredConfig"\n',
+        f'identity = "x"\ndb_path = "{db}"\n[[streams]]\ncls = "stored.config:StoredConfig"\n',
     )
     assert main(['-c', str(toml), 'migrate']) == 0
     assert 'stream_stored_config' in capsys.readouterr().out

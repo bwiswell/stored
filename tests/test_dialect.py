@@ -35,9 +35,7 @@ def test_duckdb_needs_its_own_extractor_for_text():
     assert duck.json_value('_payload', 'zones.department', text=False) == (
         'json_extract("_payload", \'$.zones.department\')'
     )
-    assert duck.json_value('_payload', 'tag.k', text=True) == (
-        'json_extract_string("_payload", \'$.tag.k\')'
-    )
+    assert duck.json_value('_payload', 'tag.k', text=True) == ('json_extract_string("_payload", \'$.tag.k\')')
 
 
 def test_duckdb_dialect_is_the_baseline_elsewhere():

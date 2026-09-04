@@ -4,6 +4,7 @@ The core mirrors ``ZenohMeta`` structurally (plan 02 Stage 3) without importing
 it, so ``build_row`` reads its attributes directly. This exercises a *real*
 ``ZenohMeta`` through that path, so an upstream field rename surfaces here.
 """
+
 from __future__ import annotations
 
 import datetime

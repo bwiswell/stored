@@ -4,17 +4,20 @@ Embedded, columnar, single-writer — a natural fit for the sole-writer
 chronicler daemon, and the engine whose native Parquet ``COPY`` makes the
 archival roadmap nearly free.
 """
+
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 
 from ..dialect import Dialect, DuckDBDialect
 from ..errors import BackendError
 from ..log import get_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from datetime import datetime
 
 _log = get_logger('backends.duckdb')
 
@@ -33,7 +36,7 @@ class DuckDBBackend:
             ephemeral store).
     """
 
-    __slots__ = ('_path', '_conn', '_pks')
+    __slots__ = ('_conn', '_path', '_pks')
 
     def __init__(self, path: str = 'chronicle.duckdb') -> None:
         self._path = path
@@ -41,7 +44,8 @@ class DuckDBBackend:
         try:
             self._conn = duckdb.connect(path)
         except duckdb.Error as exc:  # pragma: no cover - env-specific
-            raise BackendError(f'could not open DuckDB at {path!r}: {exc}') from exc
+            msg = f'could not open DuckDB at {path!r}: {exc}'
+            raise BackendError(msg) from exc
 
     @property
     def path(self) -> str:
@@ -68,8 +72,7 @@ class DuckDBBackend:
             existing = {
                 r[0]
                 for r in self._conn.execute(
-                    'SELECT column_name FROM information_schema.columns '
-                    'WHERE table_name = ?',
+                    'SELECT column_name FROM information_schema.columns WHERE table_name = ?',
                     [table],
                 ).fetchall()
             }
@@ -77,7 +80,8 @@ class DuckDBBackend:
                 if name not in existing:
                     self._conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {ctype}')
         except duckdb.Error as exc:
-            raise BackendError(f'ensure_table({table!r}) failed: {exc}') from exc
+            msg = f'ensure_table({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
         self._pks[table] = tuple(primary_key)
 
     def ensure_index(
@@ -91,14 +95,15 @@ class DuckDBBackend:
         try:
             self._conn.execute(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ({cols})')
         except duckdb.Error as exc:
-            raise BackendError(f'ensure_index({name!r}) failed: {exc}') from exc
+            msg = f'ensure_index({name!r}) failed: {exc}'
+            raise BackendError(msg) from exc
 
     def ensure_json_index(
         self,
         name: str,
         table: str,
         path: str,
-        sort_columns: Sequence[str] = (),
+        sort_columns: Sequence[str] = (),  # noqa: ARG002 — the no-op keeps the protocol's full signature
     ) -> None:
         """No-op: DuckDB cannot index an expression — the filter is correct, and scans.
 
@@ -110,7 +115,9 @@ class DuckDBBackend:
         _log.warning(
             'duckdb cannot index the expression for %s on %s (path %r) — the filter will scan; '
             'the SQLite backend indexes it',
-            name, table, path,
+            name,
+            table,
+            path,
         )
 
     def append_batch(
@@ -138,16 +145,17 @@ class DuckDBBackend:
         row_ph = '(' + ', '.join(['?'] * len(cols)) + ')'
         try:
             for start in range(0, len(rows), _CHUNK):
-                chunk = rows[start:start + _CHUNK]
+                chunk = rows[start : start + _CHUNK]
                 values = ', '.join([row_ph] * len(chunk))
                 sql = (
-                    f'INSERT INTO "{table}" ({col_list}) VALUES {values} '
+                    f'INSERT INTO "{table}" ({col_list}) VALUES {values} '  # noqa: S608 (identifiers are quoted; values are bound)
                     f'ON CONFLICT DO NOTHING'
                 )
                 params = [row.get(col) for row in chunk for col in cols]
                 self._conn.execute(sql, params)
         except duckdb.Error as exc:
-            raise BackendError(f'append_batch({table!r}) failed: {exc}') from exc
+            msg = f'append_batch({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
 
     def upsert_latest(
         self,
@@ -170,7 +178,7 @@ class DuckDBBackend:
         conflict = ', '.join(f'"{col}"' for col in key_columns)
         assignments = ', '.join(f'"{col}" = excluded."{col}"' for col in cols if col not in key_columns)
         sql = (
-            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '
+            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '  # noqa: S608 (identifiers are quoted; values are bound)
             f'ON CONFLICT ({conflict}) DO UPDATE SET {assignments} '
             f'WHERE excluded."{compare_column}" >= "{table}"."{compare_column}"'
         )
@@ -178,7 +186,8 @@ class DuckDBBackend:
             for row in rows:
                 self._conn.execute(sql, [row.get(col) for col in cols])
         except duckdb.Error as exc:
-            raise BackendError(f'upsert_latest({table!r}) failed: {exc}') from exc
+            msg = f'upsert_latest({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
 
     def select(
         self,
@@ -190,7 +199,8 @@ class DuckDBBackend:
             cursor = self._conn.execute(sql, list(params))
             fetched = cursor.fetchall()
         except duckdb.Error as exc:
-            raise BackendError(f'select failed: {exc}') from exc
+            msg = f'select failed: {exc}'
+            raise BackendError(msg) from exc
         names = [desc[0] for desc in cursor.description]
         return [dict(zip(names, values, strict=True)) for values in fetched]
 
@@ -204,11 +214,12 @@ class DuckDBBackend:
 
         Returns the number of rows removed (via ``DELETE ... RETURNING``).
         """
-        sql = f'DELETE FROM "{table}" WHERE "{column}" < ? RETURNING 1'
+        sql = f'DELETE FROM "{table}" WHERE "{column}" < ? RETURNING 1'  # noqa: S608 (identifiers are quoted; values are bound)
         try:
             deleted = self._conn.execute(sql, [cutoff]).fetchall()
         except duckdb.Error as exc:
-            raise BackendError(f'delete_before({table!r}) failed: {exc}') from exc
+            msg = f'delete_before({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
         return len(deleted)
 
     def close(self) -> None:

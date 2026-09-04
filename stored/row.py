@@ -5,6 +5,7 @@ column-keyed dict; :func:`rehydrate` reverses that into a typed instance for
 query replies. ``_payload`` (a seared JSON string) is the lossless source for
 rehydration; scalar fields are additionally projected into typed columns.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -12,13 +13,15 @@ import enum
 import itertools
 import pathlib
 import uuid
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import seared as s
 
 from . import schema
 from ._time import to_naive_utc, utcnow
-from .registry import Stream
+
+if TYPE_CHECKING:
+    from .registry import Stream
 
 
 class Meta(Protocol):

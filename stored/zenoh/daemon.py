@@ -5,23 +5,27 @@ session, resolves each configured stream's class, wires a
 :class:`~stored.zenoh.chronicler.Chronicler`, and runs until SIGTERM/SIGINT —
 then flushes, releases the session, and closes the store.
 """
+
 from __future__ import annotations
 
+import contextlib
 import importlib
 import os
 import signal
 import socket
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import zeared as z
 
-from ..config import StoredConfig, StreamSpec
 from ..errors import ConfigError
 from ..log import configure, get_logger
 from ..store import Store
 from .chronicler import Chronicler
 from .session import open_session
+
+if TYPE_CHECKING:
+    from ..config import StoredConfig, StreamSpec
 
 _log = get_logger('zenoh.daemon')
 
@@ -34,14 +38,17 @@ def _resolve(spec: StreamSpec) -> type[z.Message]:
     """
     module_path, sep, cls_name = spec.cls.partition(':')
     if not sep or not module_path or not cls_name:
-        raise ConfigError(f"stream cls {spec.cls!r} must be 'module:ClassName'")
+        msg = f"stream cls {spec.cls!r} must be 'module:ClassName'"
+        raise ConfigError(msg)
     try:
         module = importlib.import_module(module_path)
         obj = getattr(module, cls_name)
     except (ImportError, AttributeError) as exc:
-        raise ConfigError(f'cannot import stream class {spec.cls!r}: {exc}') from exc
+        msg = f'cannot import stream class {spec.cls!r}: {exc}'
+        raise ConfigError(msg) from exc
     if not (isinstance(obj, type) and issubclass(obj, z.Message)):
-        raise ConfigError(f'stream cls {spec.cls!r} is not a zeared Message class')
+        msg = f'stream cls {spec.cls!r} is not a zeared Message class'
+        raise ConfigError(msg)
     return obj
 
 
@@ -73,9 +80,17 @@ class Daemon:
     """
 
     __slots__ = (
-        '_config', '_store', '_session', '_chronicler',
-        '_owns_store', '_owns_session', '_reaper_stop', '_reaper_thread', '_stop',
-        '_injected_store', '_injected_session',
+        '_chronicler',
+        '_config',
+        '_injected_session',
+        '_injected_store',
+        '_owns_session',
+        '_owns_store',
+        '_reaper_stop',
+        '_reaper_thread',
+        '_session',
+        '_stop',
+        '_store',
     )
 
     def __init__(self, config: StoredConfig, *, session: Any = None, store: Store | None = None) -> None:
@@ -100,8 +115,10 @@ class Daemon:
             store = self._injected_store
         else:
             store = Store(
-                cfg.db_path, backend=cfg.backend,
-                flush_rows=cfg.flush_rows, flush_secs=cfg.flush_secs,
+                cfg.db_path,
+                backend=cfg.backend,
+                flush_rows=cfg.flush_rows,
+                flush_secs=cfg.flush_secs,
             )
             self._owns_store = True
 
@@ -123,8 +140,10 @@ class Daemon:
 
         if cfg.prune_interval > 0:
             self._reaper_thread = threading.Thread(
-                target=self._reaper_loop, args=(store, cfg.prune_interval),
-                name='stored-reaper', daemon=True,
+                target=self._reaper_loop,
+                args=(store, cfg.prune_interval),
+                name='stored-reaper',
+                daemon=True,
             )
             self._reaper_thread.start()
 
@@ -138,7 +157,7 @@ class Daemon:
                 removed = store.prune()
                 if removed:
                     _log.info('reaper removed %d expired row(s)', removed)
-            except Exception:
+            except Exception:  # noqa: BLE001 — a daemon loop outlives any single failure
                 _log.exception('reaper sweep failed')
 
     def wait(self) -> None:
@@ -161,7 +180,7 @@ class Daemon:
         if self._session is not None and self._owns_session:
             try:
                 z.release(session=self._session)
-            except Exception:
+            except Exception:  # noqa: BLE001 — a daemon loop outlives any single failure
                 _log.exception('error releasing session')
         if self._store is not None and self._owns_store:
             self._store.close()
@@ -169,15 +188,14 @@ class Daemon:
 
 def _install_signals(daemon: Daemon) -> None:
     """Route SIGTERM/SIGINT to ``daemon.stop`` (skipped off the main thread)."""
+
     def _handler(signum: int, _frame: Any) -> None:
         _log.info('signal %d received; shutting down', signum)
         daemon.stop()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(ValueError):  # not the main thread (e.g. under a test runner)
             signal.signal(sig, _handler)
-        except ValueError:  # not the main thread (e.g. under a test runner)
-            pass
 
 
 def run(config: StoredConfig) -> int:

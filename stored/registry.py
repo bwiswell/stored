@@ -4,6 +4,7 @@ A :class:`Stream` binds a message class to its resolved table name and
 retention policy; :class:`StreamRegistry` is the per-store collection the
 writer, query planner, and TTL reaper consult.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -80,12 +81,16 @@ def _validate_time_field(cls: type[s.Seared], time_field: str) -> None:
         if attr == time_field:
             kind = type(fld).__name__
             if kind not in schema.TIME_FIELD_KINDS:
-                raise RegistrationError(
+                msg = (
                     f'time_field {time_field!r} of {cls.__name__} is a {kind} field; '
-                    f'expected one of {sorted(schema.TIME_FIELD_KINDS)}',
+                    f'expected one of {sorted(schema.TIME_FIELD_KINDS)}'
+                )
+                raise RegistrationError(
+                    msg,
                 )
             return
-    raise RegistrationError(f'time_field {time_field!r} is not a field of {cls.__name__}')
+    msg = f'time_field {time_field!r} is not a field of {cls.__name__}'
+    raise RegistrationError(msg)
 
 
 def _validate_latest_key(cls: type[s.Seared], latest_key: tuple[str, ...]) -> None:
@@ -100,9 +105,9 @@ def _validate_latest_key(cls: type[s.Seared], latest_key: tuple[str, ...]) -> No
     columns = {attr for attr, _wire, fld in cls.__seared_fields__ if schema.column_type(fld) is not None}
     for name in latest_key:
         if name not in columns:
+            msg = f'latest_key {name!r} is not a scalar field of {cls.__name__} (scalar fields: {sorted(columns)})'
             raise RegistrationError(
-                f'latest_key {name!r} is not a scalar field of {cls.__name__} '
-                f'(scalar fields: {sorted(columns)})',
+                msg,
             )
 
 
@@ -125,16 +130,21 @@ def _validate_json_index(cls: type[s.Seared], json_index: tuple[str, ...]) -> di
     for path in json_index:
         head, _, tail = path.partition('.')
         if head not in kinds:
-            raise RegistrationError(f'json_index {path!r}: {head!r} is not a field of {cls.__name__}')
+            msg = f'json_index {path!r}: {head!r} is not a field of {cls.__name__}'
+            raise RegistrationError(msg)
         if kinds[head] != 'Dict':
-            raise RegistrationError(
+            msg = (
                 f'json_index {path!r}: {head!r} is a {kinds[head]} field of {cls.__name__}; '
-                'a path may only reach into a Dict',
+                'a path may only reach into a Dict'
+            )
+            raise RegistrationError(
+                msg,
             )
         if not tail:
             raise RegistrationError(
-                f'json_index {path!r} names the whole {head!r} dict; '
-                'give a key inside it, e.g. {head}.<key>'.format(head=head),
+                f'json_index {path!r} names the whole {head!r} dict; give a key inside it, e.g. {{head}}.<key>'.format(
+                    head=head
+                ),
             )
         paths[path] = schema.wire_path(cls, path)
     return paths
@@ -182,9 +192,11 @@ class StreamRegistry:
                 surfaces this as a ``ConfigError``.)
         """
         if not (isinstance(cls, type) and issubclass(cls, s.Seared)):
-            raise RegistrationError(f'{cls!r} is not a seared class')
+            msg = f'{cls!r} is not a seared class'
+            raise RegistrationError(msg)
         if cls in self._by_cls:
-            raise RegistrationError(f'{cls.__name__} is already registered')
+            msg = f'{cls.__name__} is already registered'
+            raise RegistrationError(msg)
         if time_field is not None:
             _validate_time_field(cls, time_field)
         if latest_key:
@@ -213,7 +225,8 @@ class StreamRegistry:
         try:
             return self._by_cls[cls]
         except KeyError:
-            raise RegistrationError(f'{cls.__name__} is not registered') from None
+            msg = f'{cls.__name__} is not registered'
+            raise RegistrationError(msg) from None
 
     def all(self) -> tuple[Stream, ...]:
         """Return every registered stream in insertion order."""

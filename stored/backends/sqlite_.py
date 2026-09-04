@@ -18,17 +18,20 @@ and read back as native ``datetime`` (parity with DuckDB). Registration is modul
 serialized by the caller (``Store`` holds one ``RLock`` across its writer, delivery, and
 query threads), so cross-thread use over the single connection is safe.
 """
+
 from __future__ import annotations
 
 import datetime
 import decimal
 import sqlite3
-from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..dialect import DEFAULT_DIALECT, Dialect
 from ..errors import BackendError
 from ..log import get_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _log = get_logger('backends.sqlite')
 
@@ -86,7 +89,7 @@ class SQLiteBackend:
             ephemeral store).
     """
 
-    __slots__ = ('_path', '_conn', '_pks')
+    __slots__ = ('_conn', '_path', '_pks')
 
     def __init__(self, path: str = 'chronicle.db') -> None:
         self._path = path
@@ -99,7 +102,8 @@ class SQLiteBackend:
             )
             self._conn.execute('PRAGMA journal_mode=WAL')
         except sqlite3.Error as exc:  # pragma: no cover - env-specific
-            raise BackendError(f'could not open SQLite at {path!r}: {exc}') from exc
+            msg = f'could not open SQLite at {path!r}: {exc}'
+            raise BackendError(msg) from exc
 
     @property
     def path(self) -> str:
@@ -129,7 +133,8 @@ class SQLiteBackend:
                     self._conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {_sqlite_type(ctype)}')
             self._conn.commit()
         except sqlite3.Error as exc:
-            raise BackendError(f'ensure_table({table!r}) failed: {exc}') from exc
+            msg = f'ensure_table({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
         self._pks[table] = tuple(primary_key)
 
     def ensure_index(
@@ -144,7 +149,8 @@ class SQLiteBackend:
             self._conn.execute(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ({cols})')
             self._conn.commit()
         except sqlite3.Error as exc:
-            raise BackendError(f'ensure_index({name!r}) failed: {exc}') from exc
+            msg = f'ensure_index({name!r}) failed: {exc}'
+            raise BackendError(msg) from exc
 
     def ensure_json_index(
         self,
@@ -164,13 +170,15 @@ class SQLiteBackend:
         ``SEARCH … (<expr>=?)`` plus ``USE TEMP B-TREE FOR ORDER BY``; with the sort
         key appended the temp B-tree disappears.
         """
-        columns = ', '.join([self.dialect.json_value('_payload', path, text=False)]
-                            + [f'"{col}"' for col in sort_columns])
+        columns = ', '.join(
+            [self.dialect.json_value('_payload', path, text=False)] + [f'"{col}"' for col in sort_columns]
+        )
         try:
             self._conn.execute(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ({columns})')
             self._conn.commit()
         except sqlite3.Error as exc:
-            raise BackendError(f'ensure_json_index({name!r}) failed: {exc}') from exc
+            msg = f'ensure_json_index({name!r}) failed: {exc}'
+            raise BackendError(msg) from exc
 
     def append_batch(
         self,
@@ -202,7 +210,8 @@ class SQLiteBackend:
             self._conn.executemany(sql, params)
             self._conn.commit()
         except sqlite3.Error as exc:
-            raise BackendError(f'append_batch({table!r}) failed: {exc}') from exc
+            msg = f'append_batch({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
 
     def upsert_latest(
         self,
@@ -235,7 +244,8 @@ class SQLiteBackend:
             self._conn.executemany(sql, params)
             self._conn.commit()
         except sqlite3.Error as exc:
-            raise BackendError(f'upsert_latest({table!r}) failed: {exc}') from exc
+            msg = f'upsert_latest({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
 
     def select(
         self,
@@ -247,7 +257,8 @@ class SQLiteBackend:
             cursor = self._conn.execute(sql, list(params))
             fetched = cursor.fetchall()
         except sqlite3.Error as exc:
-            raise BackendError(f'select failed: {exc}') from exc
+            msg = f'select failed: {exc}'
+            raise BackendError(msg) from exc
         names = [desc[0] for desc in cursor.description]
         return [dict(zip(names, values, strict=True)) for values in fetched]
 
@@ -266,7 +277,8 @@ class SQLiteBackend:
             cursor = self._conn.execute(sql, [cutoff])
             self._conn.commit()
         except sqlite3.Error as exc:
-            raise BackendError(f'delete_before({table!r}) failed: {exc}') from exc
+            msg = f'delete_before({table!r}) failed: {exc}'
+            raise BackendError(msg) from exc
         return cursor.rowcount
 
     def close(self) -> None:

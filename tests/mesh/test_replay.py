@@ -1,4 +1,5 @@
 """Replay: recorded history republished as ordinary mesh traffic."""
+
 from __future__ import annotations
 
 import asyncio
@@ -18,8 +19,8 @@ class Reading(zeared.Message):
     TOPIC = 'live/reading/{source}'
     EXTRA_TOPICS = ('replay/reading/{source}',)
 
-    source:      str   = zeared.Str(required=True)
-    value:       float = zeared.Float(default=0.0)
+    source: str = zeared.Str(required=True)
+    value: float = zeared.Float(default=0.0)
     observed_at: float = zeared.Float(required=True)
 
 

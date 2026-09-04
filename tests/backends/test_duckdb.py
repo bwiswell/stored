@@ -4,9 +4,9 @@ import pytest
 
 pytest.importorskip('duckdb')  # the DuckDB backend is the optional ``stored[duckdb]`` extra
 
-from stored.backends.duckdb_ import DuckDBBackend  # noqa: E402
-from stored.dialect import Dialect  # noqa: E402
-from stored.errors import BackendError  # noqa: E402
+from stored.backends.duckdb_ import DuckDBBackend
+from stored.dialect import Dialect
+from stored.errors import BackendError
 
 
 def test_open_memory_and_close():
@@ -27,10 +27,13 @@ def test_ensure_append_select_round_trip():
     try:
         columns = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', 'id': 'BIGINT'}
         backend.ensure_table('t', columns, ('_key_expr', '_ts_hlc'))
-        backend.append_batch('t', [
-            {'_key_expr': 'k', '_ts_hlc': 'a', 'id': 1},
-            {'_key_expr': 'k', '_ts_hlc': 'b', 'id': 2},
-        ])
+        backend.append_batch(
+            't',
+            [
+                {'_key_expr': 'k', '_ts_hlc': 'a', 'id': 1},
+                {'_key_expr': 'k', '_ts_hlc': 'b', 'id': 2},
+            ],
+        )
         rows = backend.select('SELECT * FROM "t" ORDER BY "_ts_hlc"')
         assert [r['id'] for r in rows] == [1, 2]
         assert rows[0]['_key_expr'] == 'k'
@@ -68,11 +71,16 @@ def test_upsert_latest_keeps_newest():
         cols = {'source': 'VARCHAR', 'epc': 'VARCHAR', 'x': 'DOUBLE', '_event_at': 'TIMESTAMP'}
         backend.ensure_table('latest_t', cols, ('source', 'epc'))
         key, cmp = ('source', 'epc'), '_event_at'
-        backend.upsert_latest('latest_t', [
-            {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': datetime.datetime(2026, 1, 1)},
-            {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': datetime.datetime(2026, 3, 1)},  # newest
-            {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': datetime.datetime(2026, 2, 1)},  # out of order
-        ], key, cmp)
+        backend.upsert_latest(
+            'latest_t',
+            [
+                {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': datetime.datetime(2026, 1, 1)},
+                {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': datetime.datetime(2026, 3, 1)},  # newest
+                {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': datetime.datetime(2026, 2, 1)},  # out of order
+            ],
+            key,
+            cmp,
+        )
         rows = backend.select('SELECT * FROM "latest_t"')
         assert len(rows) == 1
         assert rows[0]['x'] == 3.0
@@ -94,10 +102,13 @@ def test_delete_before_removes_old_rows():
     try:
         cols = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_issued_at': 'TIMESTAMP'}
         backend.ensure_table('t', cols, ('_key_expr', '_ts_hlc'))
-        backend.append_batch('t', [
-            {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': datetime.datetime(2026, 1, 1)},
-            {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': datetime.datetime(2026, 8, 1)},
-        ])
+        backend.append_batch(
+            't',
+            [
+                {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': datetime.datetime(2026, 1, 1)},
+                {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': datetime.datetime(2026, 8, 1)},
+            ],
+        )
         removed = backend.delete_before('t', '_issued_at', datetime.datetime(2026, 6, 1))
         assert removed == 1
         rows = backend.select('SELECT * FROM "t"')
@@ -124,12 +135,19 @@ def test_dialect_json_value_executes_on_this_engine():
     """DuckDB's json_extract yields JSON: a text compare needs the string extractor."""
     backend = DuckDBBackend(':memory:')
     try:
-        backend.ensure_table('t', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'},
-                             ('_key_expr', '_ts_hlc'))
-        backend.append_batch('t', [{
-            '_key_expr': 'k', '_ts_hlc': 'a',
-            '_payload': '{"zones": {"department": 5}, "conf": {"d": 0.75}, "tag": {"k": "abc"}}',
-        }])
+        backend.ensure_table(
+            't', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'}, ('_key_expr', '_ts_hlc')
+        )
+        backend.append_batch(
+            't',
+            [
+                {
+                    '_key_expr': 'k',
+                    '_ts_hlc': 'a',
+                    '_payload': '{"zones": {"department": 5}, "conf": {"d": 0.75}, "tag": {"k": "abc"}}',
+                }
+            ],
+        )
         dialect = backend.dialect
 
         numeric = dialect.json_value('_payload', 'zones.department', text=False)
@@ -152,13 +170,14 @@ def test_ensure_json_index_is_a_logged_no_op(caplog):
     """DuckDB's binder refuses an expression index, so the capability gap is logged, not raised."""
     backend = DuckDBBackend(':memory:')
     try:
-        backend.ensure_table('t', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'},
-                             ('_key_expr', '_ts_hlc'))
+        backend.ensure_table(
+            't', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'}, ('_key_expr', '_ts_hlc')
+        )
         with caplog.at_level('WARNING'):
             backend.ensure_json_index('ix', 't', 'zn.department', ('_ts_hlc',))
         assert 'cannot index the expression' in caplog.text
 
-        indexes = {r['index_name'] for r in backend.select("SELECT index_name FROM duckdb_indexes()")}
+        indexes = {r['index_name'] for r in backend.select('SELECT index_name FROM duckdb_indexes()')}
         assert 'ix' not in indexes  # …and nothing was created
     finally:
         backend.close()
