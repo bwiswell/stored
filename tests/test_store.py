@@ -19,6 +19,12 @@ class Obs(s.Seared):
     observed_at: float = s.Float(required=True)
 
 
+@s.seared
+class Nullable(s.Seared):
+    id:          int           = s.Int(required=True)
+    observed_at: float | None  = s.Float(default=None)
+
+
 class FixedMeta:
     """Meta with a fixed (key_expr, timestamp) — drives dedup on the PK."""
 
@@ -218,5 +224,148 @@ def test_record_is_idempotent_on_primary_key(tmp_path):
         store.record(Msg, Msg(id=1), meta=FixedMeta())
         store.record(Msg, Msg(id=1), meta=FixedMeta())
         assert len(store.query(Msg)) == 1
+    finally:
+        store.close()
+
+
+class _CountingBackend:
+    """Delegates to a real backend, counting ``select`` calls (page-count proof)."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.selects = 0
+
+    def select(self, sql, params=()):
+        self.selects += 1
+        return self.inner.select(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+def _filled(tmp_path, count, **register):
+    """A store holding ``count`` Msg rows, writer already drained."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store.register(Msg, index=('id',), **register)
+    for i in range(count):
+        store.record(Msg, Msg(id=i, name=f'n{i}'))
+    store.flush()
+    return store
+
+
+def test_iter_walks_every_row_in_order(tmp_path):
+    store = _filled(tmp_path, 25)
+    try:
+        assert [m.id for m in store.iter(Msg, chunk=4)] == list(range(25))
+        assert [m.id for m in store.iter(Msg, chunk=4, order='desc')] == list(reversed(range(25)))
+    finally:
+        store.close()
+
+
+def test_iter_pages_instead_of_materializing(tmp_path):
+    """The point of ``iter``: one page is fetched before the first row is yielded."""
+    store = _filled(tmp_path, 50)
+    counting = _CountingBackend(store._backend)
+    store._backend = counting
+    try:
+        walk = store.iter(Msg, chunk=10)
+        assert counting.selects == 0  # nothing read until the first row is pulled
+        assert next(walk).id == 0
+        assert counting.selects == 1  # …and then exactly one page, not fifty rows
+        assert [m.id for m in walk] == list(range(1, 50))
+        assert counting.selects == 6  # 5 full pages + the short one that ends the walk
+    finally:
+        store._backend = counting.inner
+        store.close()
+
+
+def test_iter_respects_limit_bounds_and_filters(tmp_path):
+    store = _filled(tmp_path, 20)
+    try:
+        assert [m.id for m in store.iter(Msg, chunk=3, limit=7)] == list(range(7))
+        assert [m.id for m in store.iter(Msg, chunk=3, id=11)] == [11]
+        assert list(store.iter(Msg, until='-1h')) == []
+    finally:
+        store.close()
+
+
+def test_iter_agrees_with_query(tmp_path):
+    store = _filled(tmp_path, 30)
+    try:
+        assert [m.id for m in store.iter(Msg, chunk=7)] == [m.id for m in store.query(Msg, limit=100)]
+    finally:
+        store.close()
+
+
+def test_iter_flushes_at_open(tmp_path):
+    """Pending writes are visible without an explicit flush — and flushed on the call."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        store.register(Msg, index=('id',))
+        store.record(Msg, Msg(id=1, name='buffered'))
+        walk = store.iter(Msg)  # flush happens here, not on first next()
+        store.record(Msg, Msg(id=2, name='after open'))
+        assert [m.id for m in walk] == [1]
+    finally:
+        store.close()
+
+
+def test_iter_skips_rows_with_no_event_time(tmp_path):
+    """A nullable ``time_field`` left unset has no place on the axis the walk resumes along."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        store.register(Nullable, time_field='observed_at', index=('id',))
+        store.record(Nullable, Nullable(id=1, observed_at=1000.0))
+        store.record(Nullable, Nullable(id=2))  # no event time
+        store.flush()
+
+        assert [n.id for n in store.iter(Nullable, chunk=1)] == [1]
+        assert {n.id for n in store.query(Nullable)} == {1, 2}  # query still returns it
+    finally:
+        store.close()
+
+
+def test_iter_rejects_bad_paging_arguments(tmp_path):
+    store = _filled(tmp_path, 1)
+    try:
+        with pytest.raises(QueryError):
+            store.iter(Msg, chunk=0)
+        with pytest.raises(QueryError):
+            store.iter(Msg, limit=-1)
+    finally:
+        store.close()
+
+
+def test_register_creates_secondary_indexes(tmp_path):
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        store.register(Obs, time_field='observed_at', index=('id',))
+        names = {
+            row['name']
+            for row in store._backend.select(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'stream_obs'",
+            )
+        }
+        assert {'idx_stream_obs_time', 'idx_stream_obs_id'} <= names
+    finally:
+        store.close()
+
+
+def test_iter_and_indexes_on_the_duckdb_backend(tmp_path):
+    """Paging binds a datetime inside a row-value comparison — worth proving on both engines."""
+    pytest.importorskip('duckdb')
+    store = Store(str(tmp_path / 'c.duckdb'), backend='duckdb', flush_secs=0)
+    try:
+        store.register(Msg, index=('id',))
+        for i in range(5):
+            store.record(Msg, Msg(id=i))
+        store.flush()
+
+        assert [m.id for m in store.iter(Msg, chunk=2)] == list(range(5))
+        names = {
+            row['index_name']
+            for row in store._backend.select("SELECT index_name FROM duckdb_indexes() WHERE table_name = 'stream_msg'")
+        }
+        assert {'idx_stream_msg_time', 'idx_stream_msg_id'} <= names
     finally:
         store.close()

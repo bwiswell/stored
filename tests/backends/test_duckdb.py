@@ -103,3 +103,16 @@ def test_delete_before_removes_old_rows():
         assert rows[0]['_ts_hlc'] == 'b'
     finally:
         backend.close()
+
+
+def test_ensure_index_creates_and_is_idempotent():
+    backend = DuckDBBackend(':memory:')
+    try:
+        columns = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', 'id': 'BIGINT'}
+        backend.ensure_table('t', columns, ('_key_expr', '_ts_hlc'))
+        backend.ensure_index('idx_t_id', 't', ('id',))
+        backend.ensure_index('idx_t_id', 't', ('id',))  # re-registration must be a no-op
+        rows = backend.select("SELECT index_name FROM duckdb_indexes() WHERE table_name = 't'")
+        assert 'idx_t_id' in {r['index_name'] for r in rows}
+    finally:
+        backend.close()

@@ -56,6 +56,38 @@ META_COLUMNS: dict[str, str] = {
 
 PRIMARY_KEY: tuple[str, str] = ('_key_expr', '_ts_hlc')
 
+
+def index_specs(
+    table: str,
+    time_column: str,
+    dimensions: tuple[str, ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The secondary indexes a stream table wants, as ``(name, columns)`` pairs.
+
+    Two kinds, and deliberately no more:
+
+    - **The temporal index** ``(time_column, _ts_hlc, _key_expr)`` — the exact sort
+      key of every planned SELECT, so it serves range queries, ``Store.iter``'s
+      keyset paging, and the reaper's ``DELETE … WHERE time < cutoff`` alike.
+    - **One per declared dimension** — a single-column index each, rather than one
+      composite, because filters are independent (a query may name ``kind`` without
+      ``source``, which a composite's leading-column rule would not serve).
+
+    ``_key_expr`` equality needs no index of its own: it leads the primary key, whose
+    unique index already serves it.
+
+    Args:
+        table: The stream's table name (indexes are named after it).
+        time_column: The stream's temporal axis (``_event_at`` or ``_issued_at``).
+        dimensions: The declared queryable dimensions (``Stream.index``).
+
+    Returns:
+        ``(index_name, columns)`` pairs, temporal index first.
+    """
+    specs = [(f'idx_{table}_time', (time_column, '_ts_hlc', '_key_expr'))]
+    specs.extend((f'idx_{table}_{dim}', (dim,)) for dim in dimensions)
+    return tuple(specs)
+
 #: Temporal-axis column names. ``_issued_at`` is the mesh delivery/issue time (the
 #: default axis for retention + range queries); ``_event_at`` is the normalized
 #: **domain event time**, populated from a stream's ``time_field`` when set (NULL

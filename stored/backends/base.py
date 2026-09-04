@@ -15,9 +15,9 @@ class StorageBackend(Protocol):
     """Minimal storage surface the ``stored`` core depends on.
 
     Implementations own their own connection lifecycle; the core calls
-    :meth:`ensure_table` at registration, :meth:`append_batch` from the writer,
-    :meth:`select` from the query planner, and :meth:`delete_before` from the
-    TTL reaper.
+    :meth:`ensure_table` + :meth:`ensure_index` at registration,
+    :meth:`append_batch` from the writer, :meth:`select` from the query planner,
+    and :meth:`delete_before` from the TTL reaper.
     """
 
     def ensure_table(
@@ -32,6 +32,21 @@ class StorageBackend(Protocol):
             table: Table name.
             columns: Ordered mapping of column name to backend column type.
             primary_key: Column names forming the primary key / dedup key.
+        """
+        ...
+
+    def ensure_index(
+        self,
+        name: str,
+        table: str,
+        columns: Sequence[str],
+    ) -> None:
+        """Create the secondary index ``name`` on ``table`` if it does not exist.
+
+        Args:
+            name: Index name (the core derives it; see ``schema.index_specs``).
+            table: Table to index.
+            columns: Indexed columns, in order.
         """
         ...
 

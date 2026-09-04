@@ -34,3 +34,18 @@ def test_derive_columns_maps_scalars():
     # meta columns are present and come first
     assert '_key_expr' in cols
     assert list(cols)[:2] == ['_key_expr', '_ts_hlc']
+
+
+def test_index_specs_temporal_first_then_dimensions():
+    specs = schema.index_specs('stream_sample', '_event_at', ('id', 'name'))
+    assert specs[0] == ('idx_stream_sample_time', ('_event_at', '_ts_hlc', '_key_expr'))
+    assert specs[1:] == (
+        ('idx_stream_sample_id', ('id',)),
+        ('idx_stream_sample_name', ('name',)),
+    )
+
+
+def test_index_specs_without_dimensions_is_temporal_only():
+    assert schema.index_specs('stream_sample', '_issued_at', ()) == (
+        ('idx_stream_sample_time', ('_issued_at', '_ts_hlc', '_key_expr')),
+    )

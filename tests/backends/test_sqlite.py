@@ -164,3 +164,28 @@ def test_decimal_and_blob_round_trip():
         assert row['blob'] == b'\x00\x01'
     finally:
         backend.close()
+
+
+def test_ensure_index_creates_and_is_idempotent():
+    backend = SQLiteBackend(':memory:')
+    try:
+        columns = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', 'id': 'BIGINT'}
+        backend.ensure_table('t', columns, ('_key_expr', '_ts_hlc'))
+        backend.ensure_index('idx_t_id', 't', ('id',))
+        backend.ensure_index('idx_t_id', 't', ('id',))  # re-registration must be a no-op
+        rows = backend.select("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 't'")
+        assert 'idx_t_id' in {r['name'] for r in rows}
+    finally:
+        backend.close()
+
+
+def test_ensure_index_composite_columns():
+    backend = SQLiteBackend(':memory:')
+    try:
+        columns = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_issued_at': 'TIMESTAMP'}
+        backend.ensure_table('t', columns, ('_key_expr', '_ts_hlc'))
+        backend.ensure_index('idx_t_time', 't', ('_issued_at', '_ts_hlc', '_key_expr'))
+        rows = backend.select('PRAGMA index_info("idx_t_time")')
+        assert [r['name'] for r in rows] == ['_issued_at', '_ts_hlc', '_key_expr']
+    finally:
+        backend.close()

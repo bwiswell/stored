@@ -7,6 +7,8 @@ chronicler (``stored.zenoh``) wires a ``Store`` to a ``zeared`` session, but the
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
 import seared as s
@@ -16,7 +18,7 @@ from ._time import Duration, duration_text
 from .backends.base import StorageBackend
 from .errors import ConfigError, QueryError
 from .log import get_logger
-from .query import TimeBound, parse_window, plan
+from .query import DEFAULT_CHUNK, Anchor, TimeBound, Window, parse_window, plan
 from .registry import Stream, StreamRegistry
 from .row import Meta, build_row, rehydrate
 from .ttl import Reaper
@@ -144,6 +146,8 @@ class Store:
         columns = schema.derive_columns(cls)
         with self._lock:
             self._backend.ensure_table(stream.table, columns, schema.PRIMARY_KEY)
+            for index_name, index_columns in schema.index_specs(stream.table, stream.time_column, stream.index):
+                self._backend.ensure_index(index_name, stream.table, index_columns)
             if stream.has_latest:
                 self._backend.ensure_table(stream.latest_table, columns, stream.latest_key)
         if stream.has_latest:
@@ -206,6 +210,101 @@ class Store:
         with self._lock:
             rows = self._backend.select(sql, params)
         return [rehydrate(cls, columns) for columns in rows]
+
+    def iter[M: s.Seared](  # noqa: A003 — the streaming sibling of ``query``
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        chunk: int = DEFAULT_CHUNK,
+        **filters: Any,
+    ) -> Iterator[M]:
+        """Stream stored history for ``cls`` in bounded memory.
+
+        The streaming sibling of :meth:`query`: same window, key and filters, but
+        rows arrive a page at a time instead of as one list, so a window far larger
+        than memory can be walked. Three properties worth knowing:
+
+        - **Flush-at-open, once.** Pending writes are flushed when ``iter`` is
+          *called* (not on first ``next``), so the walk sees everything recorded
+          before it started. Unlike :meth:`query`, it does **not** re-flush per page.
+        - **Not a snapshot.** The store lock is released between pages so the writer
+          keeps draining. Rows recorded mid-walk that sort *after* the current
+          position will be yielded; the keyset anchor guarantees no row is yielded
+          twice and none is skipped.
+        - **Rows with no event time are skipped.** A nullable ``time_field`` that
+          arrived unset has no place on the temporal axis the walk resumes along.
+          :meth:`query` still returns them within an unbounded window.
+
+        Args:
+            cls: The registered message class.
+            key: Topic key to match (``None`` matches all; ``*`` globs).
+            since: Lower time bound — ISO-8601, relative (``'-1h'``), unix seconds,
+                a ``datetime``, or ``None``.
+            until: Upper time bound (same forms).
+            limit: Maximum rows in total, or ``None`` for the whole window. Unlike
+                :meth:`query` there is no implicit cap — streaming is the point.
+            order: ``'asc'`` or ``'desc'`` by time.
+            chunk: Rows per page — the memory bound, not a row cap.
+            **filters: Equality filters on indexed field dimensions.
+
+        Yields:
+            Decoded instances of ``cls``, time-ordered.
+
+        Raises:
+            QueryError: If ``chunk``/``limit`` is invalid, a bound is unparseable,
+                or a filter names a non-indexed field.
+        """
+        if chunk < 1:
+            raise QueryError(f'chunk must be positive, got {chunk}')
+        if limit is not None and limit < 0:
+            raise QueryError(f'limit must be non-negative, got {limit}')
+        stream = self._registry.get(cls)
+        # Resolve the window once: a relative bound ('-1h') must not drift per page.
+        window = parse_window(since=since, until=until, limit=chunk, order=order)
+        self._writer.flush()
+        return self._pages(cls, stream, window, key or '', filters or None, chunk, limit)
+
+    def _pages[M: s.Seared](
+        self,
+        cls: type[M],
+        stream: Stream,
+        window: Window,
+        key_expr: str,
+        filters: dict[str, Any] | None,
+        chunk: int,
+        limit: int | None,
+    ) -> Iterator[M]:
+        """Walk ``stream`` page by page, resuming each from the previous page's last row."""
+        remaining = limit
+        anchor: Anchor | None = None
+        time_col = stream.time_column
+        while remaining is None or remaining > 0:
+            size = chunk if remaining is None else min(chunk, remaining)
+            sql, params = plan(
+                stream,
+                key_expr,
+                replace(window, limit=size),
+                filters,
+                after=anchor,
+                skip_null_time=True,
+            )
+            with self._lock:
+                rows = self._backend.select(sql, params)
+            if not rows:
+                return
+            for columns in rows:
+                yield rehydrate(cls, columns)
+            if remaining is not None:
+                remaining -= len(rows)
+            if len(rows) < size:
+                return  # short page — the window is exhausted
+            last = rows[-1]
+            anchor = (last[time_col], last['_ts_hlc'], last['_key_expr'])
 
     def latest[M: s.Seared](self, cls: type[M], **key: Any) -> M | None:
         """Return the newest-recorded instance for one logical-entity ``key``.
