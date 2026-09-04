@@ -105,6 +105,26 @@ the open path, the second an enqueue cheaper than the hop that would defer it.
 Everything reaching the backend is awaited, and `iter` hands control back to the
 loop between pages, so a long walk never stalls the service around it.
 
+## Services: declare the bindings, don't write them
+
+`Binding` turns the subscriber and the two queryables every historian ends up
+writing into declarations:
+
+```python
+from stored.mesh import Binding
+
+binding = Binding(store)
+binding.record(Alarm, store_as=Event, via=from_alarm)   # subscribe A → persist B
+binding.serve_range(Event, filters=('source', 'kind'), since='from_ts', limit='limit')
+binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),
+                     project=to_last_position, missing=no_position)
+```
+
+Handlers are `async def` and await the store off the loop. The binding speaks only
+`zeared` vocabulary — a message class, its `REQUEST` payload, a queryable, a
+projection — so it serves any `@zeared` contract without knowing a thing about it.
+See [docs/mesh.md](docs/mesh.md).
+
 ## Mesh: the chronicler
 
 ```python
@@ -137,10 +157,11 @@ See `systemd/stored.service` for the unit template.
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — the three layers, ingest/query
-  paths, timestamps, concurrency.
+- [docs/architecture.md](docs/architecture.md) — the four layers, ingest/query/
+  streaming paths, timestamps, concurrency.
 - [docs/storage-model.md](docs/storage-model.md) — row shape, type map, dedup,
-  TTL, archival roadmap.
+  indexes, TTL, archival roadmap.
+- [docs/mesh.md](docs/mesh.md) — the `stored.mesh` layer: `AsyncStore` + `Binding`.
 - [docs/chronicler.md](docs/chronicler.md) — the `stored.zenoh` layer + daemon.
 - [docs/configuration.md](docs/configuration.md) — `StoredConfig` / `StreamSpec`.
 

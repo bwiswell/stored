@@ -14,6 +14,25 @@ never pays for Zenoh.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .async_store import AsyncStore
 
-__all__ = ['AsyncStore']
+if TYPE_CHECKING:
+    from .binding import UNSET_FALSY, Binding
+
+__all__ = ['UNSET_FALSY', 'AsyncStore', 'Binding']
+
+
+def __getattr__(name: str) -> object:
+    """Resolve the transport-bound names lazily (PEP 562).
+
+    :class:`Binding` imports ``zeared``; :class:`AsyncStore` must not have to. Keeping
+    the binding behind this hook is what lets ``from stored.mesh import AsyncStore``
+    stay Zenoh-free — an invariant with a test, not a convention.
+    """
+    if name in ('Binding', 'UNSET_FALSY'):
+        from . import binding
+
+        return getattr(binding, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
