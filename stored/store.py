@@ -7,7 +7,7 @@ chronicler (``stored.zenoh``) wires a ``Store`` to a ``zeared`` session, but the
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import replace
 from typing import Any
 
@@ -222,7 +222,7 @@ class Store:
         order: str = 'asc',
         chunk: int = DEFAULT_CHUNK,
         **filters: Any,
-    ) -> Iterator[M]:
+    ) -> Generator[M]:
         """Stream stored history for ``cls`` in bounded memory.
 
         The streaming sibling of :meth:`query`: same window, key and filters, but
@@ -253,7 +253,8 @@ class Store:
             **filters: Equality filters on indexed field dimensions.
 
         Yields:
-            Decoded instances of ``cls``, time-ordered.
+            Decoded instances of ``cls``, time-ordered. The walk is a generator, so
+            an abandoned one can be released early with ``close()``.
 
         Raises:
             QueryError: If ``chunk``/``limit`` is invalid, a bound is unparseable,
@@ -278,7 +279,7 @@ class Store:
         filters: dict[str, Any] | None,
         chunk: int,
         limit: int | None,
-    ) -> Iterator[M]:
+    ) -> Generator[M]:
         """Walk ``stream`` page by page, resuming each from the previous page's last row."""
         remaining = limit
         anchor: Anchor | None = None
