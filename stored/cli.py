@@ -4,20 +4,25 @@ Stdlib ``argparse`` only — the surface is small: ``run`` (chronicler daemon),
 ``validate-config``, ``prune`` (force a TTL sweep), and ``migrate`` (reconcile
 tables to current schemas).
 """
+
 from __future__ import annotations
 
 import argparse
 import tomllib
-from collections.abc import Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import log
 from .config import StoredConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _load_config(path: str | None) -> StoredConfig:
     """Load config from a TOML ``path`` if given, else from the environment."""
     if path is not None:
-        with open(path, 'rb') as handle:
+        with Path(path).open('rb') as handle:
             data = tomllib.load(handle)
         return StoredConfig.load(data)
     return StoredConfig.from_env()
@@ -27,8 +32,7 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
     """Load and summarize the configuration, reporting any error."""
     cfg = _load_config(args.config)
     print(  # noqa: T201 - CLI user-facing output
-        f'ok: identity={cfg.identity!r} backend={cfg.backend!r} '
-        f'db_path={cfg.db_path!r} streams={len(cfg.streams)}',
+        f'ok: identity={cfg.identity!r} backend={cfg.backend!r} db_path={cfg.db_path!r} streams={len(cfg.streams)}',
     )
     return 0
 
@@ -82,7 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser."""
     parser = argparse.ArgumentParser(prog='stored', description=__doc__)
     parser.add_argument(
-        '-c', '--config', default=None,
+        '-c',
+        '--config',
+        default=None,
         help='Path to a TOML config file (default: read from the environment).',
     )
     sub = parser.add_subparsers(dest='command', required=True)

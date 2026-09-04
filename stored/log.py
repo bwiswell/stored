@@ -3,6 +3,7 @@
 Stdlib ``logging`` only — the daemon logs to stdout, which systemd routes to
 journald. No colorlog / rich, per the workspace convention.
 """
+
 from __future__ import annotations
 
 import logging

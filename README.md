@@ -204,8 +204,13 @@ See `systemd/stored.service` for the unit template.
 
 ```sh
 uv sync --extra duckdb
+uv run prek install        # once per clone: the commit hooks
 uv run pytest tests/
 ```
+
+The hooks are the house set (`.pre-commit-config.yaml`): `ruff check`, `ruff format`,
+`deptry`, `ty check` — the same gate `seared` and `zeared` run, so a commit that passes
+here passes there.
 
 Tests mirror the source layout. The mesh tests spin up a loopback Zenoh peer
 (`zeared` is a core dependency, always present); the DuckDB-backend tests need the

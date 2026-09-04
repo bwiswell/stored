@@ -4,18 +4,17 @@ Persists and queries ``seared`` objects with no mesh involved. The Zenoh
 chronicler (``stored.zenoh``) wires a ``Store`` to a ``zeared`` session, but the
 ``Store`` itself never imports ``zeared``.
 """
+
 from __future__ import annotations
 
 import threading
-from collections.abc import Generator
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import seared as s
 
 from . import schema
 from ._time import Duration, duration_text
-from .backends.base import StorageBackend
 from .errors import ConfigError, QueryError
 from .log import get_logger
 from .query import DEFAULT_CHUNK, Anchor, TimeBound, Window, parse_window, plan
@@ -23,6 +22,11 @@ from .registry import Stream, StreamRegistry
 from .row import Meta, build_row, rehydrate
 from .ttl import Reaper
 from .writer import Writer
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from .backends.base import StorageBackend
 
 _log = get_logger('store')
 
@@ -34,7 +38,8 @@ def _horizon(value: Duration | None) -> str | None:
     try:
         return duration_text(value)
     except ValueError as exc:
-        raise ConfigError(f'invalid retention {value!r}: {exc}') from exc
+        msg = f'invalid retention {value!r}: {exc}'
+        raise ConfigError(msg) from exc
 
 
 def _make_backend(backend: str, path: str) -> StorageBackend:
@@ -51,7 +56,8 @@ def _make_backend(backend: str, path: str) -> StorageBackend:
         from .backends.duckdb_ import DuckDBBackend
 
         return DuckDBBackend(path)
-    raise ConfigError(f'unknown backend {backend!r} (expected one of: sqlite, duckdb)')
+    msg = f'unknown backend {backend!r} (expected one of: sqlite, duckdb)'
+    raise ConfigError(msg)
 
 
 class Store:
@@ -69,7 +75,7 @@ class Store:
         flush_secs: Writer flush interval in seconds (``0`` disables the timer).
     """
 
-    __slots__ = ('_backend', '_registry', '_lock', '_writer', '_reaper')
+    __slots__ = ('_backend', '_lock', '_reaper', '_registry', '_writer')
 
     def __init__(
         self,
@@ -144,14 +150,23 @@ class Store:
         archive = _horizon(archive)
         latest_retention = _horizon(latest_retention)
         stream = self._registry.add(
-            cls, retention=retention, archive=archive, index=index, time_field=time_field,
-            latest_key=latest_key, latest_retention=latest_retention, json_index=json_index,
+            cls,
+            retention=retention,
+            archive=archive,
+            index=index,
+            time_field=time_field,
+            latest_key=latest_key,
+            latest_retention=latest_retention,
+            json_index=json_index,
         )
         columns = schema.derive_columns(cls)
         with self._lock:
             self._backend.ensure_table(stream.table, columns, schema.PRIMARY_KEY)
             for index_name, index_columns in schema.index_specs(
-                stream.table, stream.time_column, stream.index, served_by_pk=schema.PRIMARY_KEY[:1],
+                stream.table,
+                stream.time_column,
+                stream.index,
+                served_by_pk=schema.PRIMARY_KEY[:1],
             ):
                 self._backend.ensure_index(index_name, stream.table, index_columns)
             sort_key = (stream.time_column, '_ts_hlc', '_key_expr')
@@ -162,7 +177,9 @@ class Store:
                 # ``query_latest`` reads this table, so it wants the same indexes —
                 # minus whatever the entity key already leads.
                 for index_name, index_columns in schema.index_specs(
-                    stream.latest_table, stream.time_column, stream.index,
+                    stream.latest_table,
+                    stream.time_column,
+                    stream.index,
                     served_by_pk=stream.latest_key[:1],
                 ):
                     self._backend.ensure_index(index_name, stream.latest_table, index_columns)
@@ -170,7 +187,10 @@ class Store:
                     self._backend.ensure_json_index(index_name, stream.latest_table, wire, sort_key)
         if stream.has_latest:
             self._writer.register_latest(
-                stream.table, stream.latest_table, stream.latest_key, stream.time_column,
+                stream.table,
+                stream.latest_table,
+                stream.latest_key,
+                stream.time_column,
             )
         return stream
 
@@ -228,7 +248,7 @@ class Store:
         window = parse_window(since=since, until=until, limit=limit, order=order)
         return self._select(cls, stream, stream.table, window, key or '', filters or None, where)
 
-    def iter[M: s.Seared](  # noqa: A003 — the streaming sibling of ``query``
+    def iter[M: s.Seared](
         self,
         cls: type[M],
         *,
@@ -280,16 +300,18 @@ class Store:
                 or a filter names a non-indexed field.
         """
         if chunk < 1:
-            raise QueryError(f'chunk must be positive, got {chunk}')
+            msg = f'chunk must be positive, got {chunk}'
+            raise QueryError(msg)
         if limit is not None and limit < 0:
-            raise QueryError(f'limit must be non-negative, got {limit}')
+            msg = f'limit must be non-negative, got {limit}'
+            raise QueryError(msg)
         stream = self._registry.get(cls)
         # Resolve the window once: a relative bound ('-1h') must not drift per page.
         window = parse_window(since=since, until=until, limit=chunk, order=order)
         self._writer.flush()
         return self._pages(cls, stream, stream.table, window, key or '', filters or None, chunk, limit, where)
 
-    def _select[M: s.Seared](  # noqa: PLR0913 — one argument per part of the read
+    def _select[M: s.Seared](
         self,
         cls: type[M],
         stream: Stream,
@@ -301,14 +323,20 @@ class Store:
     ) -> list[M]:
         """Plan and run one read against ``table`` (flushes first — read-your-writes)."""
         sql, params = plan(
-            stream, key_expr, window, filters, where=where, table=table, dialect=self._backend.dialect,
+            stream,
+            key_expr,
+            window,
+            filters,
+            where=where,
+            table=table,
+            dialect=self._backend.dialect,
         )
         self._writer.flush()
         with self._lock:
             rows = self._backend.select(sql, params)
         return [rehydrate(cls, columns) for columns in rows]
 
-    def _pages[M: s.Seared](  # noqa: PLR0913 — the walk's whole state
+    def _pages[M: s.Seared](
         self,
         cls: type[M],
         stream: Stream,
@@ -435,21 +463,32 @@ class Store:
                 or a filter names a non-indexed field.
         """
         if chunk < 1:
-            raise QueryError(f'chunk must be positive, got {chunk}')
+            msg = f'chunk must be positive, got {chunk}'
+            raise QueryError(msg)
         if limit is not None and limit < 0:
-            raise QueryError(f'limit must be non-negative, got {limit}')
+            msg = f'limit must be non-negative, got {limit}'
+            raise QueryError(msg)
         stream = self._require_latest(cls, 'iter_latest')
         window = parse_window(since=since, until=until, limit=chunk, order=order)
         self._writer.flush()
         return self._pages(
-            cls, stream, stream.latest_table, window, key or '', filters or None, chunk, limit, where,
+            cls,
+            stream,
+            stream.latest_table,
+            window,
+            key or '',
+            filters or None,
+            chunk,
+            limit,
+            where,
         )
 
     def _require_latest(self, cls: type[s.Seared], what: str) -> Stream:
         """The stream for ``cls``, or a clear error when it keeps no latest projection."""
         stream = self._registry.get(cls)
         if not stream.has_latest:
-            raise ConfigError(f'{what}({cls.__name__}) needs a latest projection (register with latest_key=…)')
+            msg = f'{what}({cls.__name__}) needs a latest projection (register with latest_key=…)'
+            raise ConfigError(msg)
         return stream
 
     def latest[M: s.Seared](self, cls: type[M], **key: Any) -> M | None:
@@ -473,8 +512,9 @@ class Store:
         """
         stream = self._require_latest(cls, 'latest')
         if set(key) != set(stream.latest_key):
+            msg = f'latest({cls.__name__}) needs exactly {list(stream.latest_key)}, got {sorted(key)}'
             raise QueryError(
-                f'latest({cls.__name__}) needs exactly {list(stream.latest_key)}, got {sorted(key)}',
+                msg,
             )
         where = ' AND '.join(f'"{col}" = ?' for col in stream.latest_key)
         sql = f'SELECT * FROM "{stream.latest_table}" WHERE {where} LIMIT 1'  # noqa: S608 (quoted identifiers)

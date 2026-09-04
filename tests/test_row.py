@@ -8,13 +8,13 @@ from stored.row import build_row, rehydrate
 
 @s.seared
 class Msg(s.Seared):
-    id:   int = s.Int(required=True)
+    id: int = s.Int(required=True)
     name: str = s.Str(default='')
 
 
 @s.seared
 class Obs(s.Seared):
-    id:          int   = s.Int(required=True)
+    id: int = s.Int(required=True)
     observed_at: float = s.Float(required=True)
 
 

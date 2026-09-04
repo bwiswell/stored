@@ -1,6 +1,6 @@
 [project]
 name = "stored"
-version = "0.2.16"
+version = "0.2.17"
 description = "A zeared-native persistence layer and Zenoh chronicler"
 authors = [
     { name = "Benj Wiswell", email = "benjwiswell@gmail.com" },
@@ -30,11 +30,12 @@ duckdb = ["duckdb>=1.1"]
 
 [dependency-groups]
 dev = [
+    "deptry",
+    "prek",
     "pytest>=8.0,<9.0",
     "pytest-asyncio>=0.24",
-    "ty",
     "ruff",
-    "deptry",
+    "ty",
 ]
 
 [tool.uv.sources]
@@ -52,6 +53,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["stored"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/bench", "/project-plans"]
+
 [tool.pytest.ini_options]
 pythonpath = ["tests"]
 asyncio_mode = "auto"
@@ -63,21 +67,83 @@ exclude = ["tests", "bench"]
 
 [tool.ruff]
 line-length = 120
-extend-exclude = ["bench"]
+target-version = "py314"
+indent-width = 4
+# Ruff formats Python code blocks inside Markdown. Off here, as in seared/zeared: the
+# docs align field declarations into columns deliberately, and several ```python blocks
+# show *JSON* wire form, which the formatter rewrites to single quotes.
+extend-exclude = ["bench", "*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "D"]
+select = ["ALL"]
 ignore = [
-    "D203",  # one-blank-line-before-class (conflicts with D211)
-    "D213",  # multi-line-summary-second-line (conflicts with D212)
-    "D107",  # __init__ docstring — google convention documents args on the class
+    "COM",     # comma rules (formatter owns these)
+    "CPY",     # copyright notice at top of file
+    "FLY",     # str.join -> f-string (we join to avoid the {{}} brace footgun)
+    "D100",    # missing docstring in public module
+    "D101",    # missing docstring in public class
+    "D104",    # missing docstring in public package
+    "D203",    # one-blank-line-before-class (conflicts with D211)
+    "D213",    # multi-line-summary-second-line (conflicts with D212)
+    "D107",    # __init__ docstring — google convention documents args on the class
+    "PLC0415", # allow intentional lazy imports
+    "TD",      # TODO formatting
+    "FIX002",  # disallow TODOs
+    "TRY003",  # long messages outside exception class
+    # --- stored-specific deviations from the house list ---
+    # Everything stored and queried is **naive UTC** by design (docs/architecture.md
+    # "Time"): canonicalizing at the boundary keeps storage dependency-free across
+    # backends, and SQLite orders ISO-8601 text lexically only if it is uniform. The
+    # naive constructor calls are that decision, not an oversight.
+    "DTZ001",  # datetime() without tzinfo
+    # stored is four Pattern B subpackages (backends/, mesh/, zenoh/, plus the core)
+    # whose modules reach their siblings via `from ..x import` — the same layout
+    # zeared carries this ignore for.
+    "TID252",  # parent-relative imports are the subpackage layout working
+    # `Any` is the boundary type here as in the sisters: backend rows, zeared payloads,
+    # and the `meta` surface a subscriber hands in.
+    "ANN401",  # dynamically typed expressions at the boundary
+    # A read *is* its dimensions: key, window, order, limit, chunk, filters, paths — and
+    # a registration is its spec. They are keyword-only, so the count is a description of
+    # the query language rather than a function doing too much. Fifteen `noqa`s down the
+    # read surface would say less than this comment does.
+    "PLR0913", # too many arguments
+    "PLR0917", # too many positional arguments
 ]
+fixable = ["ALL"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D"]
+# The transport layer imports its transport at runtime, on purpose. `zeared` appears
+# only in annotations here, so TC would make the import type-only and technically be
+# right — but importing `stored.zenoh` is *how* a consumer opts into the transport, an
+# invariant `tests/test_dependency_shape.py` pins. Hiding it would make the layer's
+# whole reason for existing invisible at import time.
+"stored/zenoh/**" = ["TC002"]
+
+# Tests assert, build fixtures without annotations, reach into privates to prove
+# internals (page counts, plan shapes), and compare against magic numbers on purpose.
+"tests/**" = [
+    "ANN",     # fixtures and test functions carry no annotations
+    "ARG",     # unused arguments in stub callbacks
+    "D",       # docstrings are optional in tests
+    "INP001",  # test packages are namespace dirs by design
+    "PLR2004", # magic values are the assertions
+    "PT011",   # broad pytest.raises is fine against our own error types
+    "S101",    # assert is the point
+    "S603",    # subprocess in the dependency-shape probes
+    "SLF001",  # reaching into privates is how invariants get pinned
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+quote-style = "single"
 
 [tool.deptry]
 extend_exclude = ["bench"]

@@ -9,13 +9,16 @@ redelivery a no-op.
 Backend I/O is serialized through a shared lock (the owning ``Store``'s), so the
 periodic flush thread never touches the connection concurrently with a query.
 """
+
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .backends.base import StorageBackend
 from .log import get_logger
+
+if TYPE_CHECKING:
+    from .backends.base import StorageBackend
 
 _log = get_logger('writer')
 
@@ -36,8 +39,15 @@ class Writer:
     """
 
     __slots__ = (
-        '_backend', '_flush_rows', '_flush_secs', '_buffers',
-        '_buffer_lock', '_backend_lock', '_stop', '_thread', '_latest',
+        '_backend',
+        '_backend_lock',
+        '_buffer_lock',
+        '_buffers',
+        '_flush_rows',
+        '_flush_secs',
+        '_latest',
+        '_stop',
+        '_thread',
     )
 
     def __init__(
@@ -64,7 +74,9 @@ class Writer:
         """Start the periodic flush thread (no-op when ``flush_secs`` is 0)."""
         if self._thread is None and self._flush_secs > 0:
             self._thread = threading.Thread(
-                target=self._run, name='stored-writer', daemon=True,
+                target=self._run,
+                name='stored-writer',
+                daemon=True,
             )
             self._thread.start()
 
@@ -73,7 +85,7 @@ class Writer:
         while not self._stop.wait(self._flush_secs):
             try:
                 self.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001 — a writer thread must not die of one bad batch
                 _log.exception('periodic flush failed')
 
     def register_latest(
@@ -118,7 +130,7 @@ class Writer:
                     if latest is not None:
                         latest_table, key_columns, compare_column = latest
                         self._backend.upsert_latest(latest_table, rows, key_columns, compare_column)
-                except Exception:
+                except Exception:  # noqa: BLE001 — a writer thread must not die of one bad batch
                     _log.exception('flush of %d rows to %s failed (dropped)', len(rows), table)
 
     def close(self) -> None:

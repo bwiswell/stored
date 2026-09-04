@@ -40,11 +40,13 @@ def test_stream_spec_defaults():
 
 
 def test_stream_spec_latest_projection_parses():
-    spec = StreamSpec.load({
-        'cls': 'pkg.mod:Location',
-        'time_field': 'observed_at',
-        'latest': {'key': ['source', 'epc'], 'retention': '30d'},
-    })
+    spec = StreamSpec.load(
+        {
+            'cls': 'pkg.mod:Location',
+            'time_field': 'observed_at',
+            'latest': {'key': ['source', 'epc'], 'retention': '30d'},
+        }
+    )
     assert spec.time_field == 'observed_at'
     assert spec.latest is not None
     assert spec.latest.key == ['source', 'epc']

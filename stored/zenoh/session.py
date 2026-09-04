@@ -4,6 +4,7 @@ Opens a session with timestamping enabled — the chronicler depends on Zenoh HL
 timestamps for ordering and dedup, so timestamping (zeared's default) is
 mandatory, not optional.
 """
+
 from __future__ import annotations
 
 from typing import Any

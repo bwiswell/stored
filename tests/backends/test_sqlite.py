@@ -22,10 +22,13 @@ def test_ensure_append_select_round_trip():
     try:
         columns = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', 'id': 'BIGINT'}
         backend.ensure_table('t', columns, ('_key_expr', '_ts_hlc'))
-        backend.append_batch('t', [
-            {'_key_expr': 'k', '_ts_hlc': 'a', 'id': 1},
-            {'_key_expr': 'k', '_ts_hlc': 'b', 'id': 2},
-        ])
+        backend.append_batch(
+            't',
+            [
+                {'_key_expr': 'k', '_ts_hlc': 'a', 'id': 1},
+                {'_key_expr': 'k', '_ts_hlc': 'b', 'id': 2},
+            ],
+        )
         rows = backend.select('SELECT * FROM "t" ORDER BY "_ts_hlc"')
         assert [r['id'] for r in rows] == [1, 2]
         assert rows[0]['_key_expr'] == 'k'
@@ -62,10 +65,13 @@ def test_delete_before_removes_old_rows():
     try:
         cols = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_issued_at': 'TIMESTAMP'}
         backend.ensure_table('t', cols, ('_key_expr', '_ts_hlc'))
-        backend.append_batch('t', [
-            {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': datetime.datetime(2026, 1, 1)},
-            {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': datetime.datetime(2026, 8, 1)},
-        ])
+        backend.append_batch(
+            't',
+            [
+                {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': datetime.datetime(2026, 1, 1)},
+                {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': datetime.datetime(2026, 8, 1)},
+            ],
+        )
         removed = backend.delete_before('t', '_issued_at', datetime.datetime(2026, 6, 1))
         assert removed == 1
         rows = backend.select('SELECT * FROM "t"')
@@ -97,10 +103,13 @@ def test_time_ordering_matches_chronology_across_fractional_seconds():
         backend.ensure_table('t', cols, ('_key_expr', '_ts_hlc'))
         whole = datetime.datetime(2026, 8, 27, 12, 0, 0)  # no fractional part
         frac = datetime.datetime(2026, 8, 27, 12, 0, 0, 1)  # 1 microsecond later
-        backend.append_batch('t', [
-            {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': frac},
-            {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': whole},
-        ])
+        backend.append_batch(
+            't',
+            [
+                {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': frac},
+                {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': whole},
+            ],
+        )
         rows = backend.select('SELECT * FROM "t" ORDER BY "_issued_at"')
         assert [r['_ts_hlc'] for r in rows] == ['a', 'b']
         cutoff = backend.delete_before('t', '_issued_at', frac)
@@ -118,11 +127,16 @@ def test_upsert_latest_keeps_newest_within_a_batch():
     backend = SQLiteBackend(':memory:')
     try:
         _latest_table(backend)
-        backend.upsert_latest('latest_t', [
-            {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': datetime.datetime(2026, 1, 1)},
-            {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': datetime.datetime(2026, 3, 1)},  # newest
-            {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': datetime.datetime(2026, 2, 1)},  # out of order
-        ], ('source', 'epc'), '_event_at')
+        backend.upsert_latest(
+            'latest_t',
+            [
+                {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': datetime.datetime(2026, 1, 1)},
+                {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': datetime.datetime(2026, 3, 1)},  # newest
+                {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': datetime.datetime(2026, 2, 1)},  # out of order
+            ],
+            ('source', 'epc'),
+            '_event_at',
+        )
         rows = backend.select('SELECT * FROM "latest_t"')
         assert len(rows) == 1
         assert rows[0]['x'] == 3.0
@@ -156,9 +170,12 @@ def test_decimal_and_blob_round_trip():
     try:
         cols = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', 'amount': 'DECIMAL(38, 9)', 'blob': 'BLOB'}
         backend.ensure_table('t', cols, ('_key_expr', '_ts_hlc'))
-        backend.append_batch('t', [
-            {'_key_expr': 'k', '_ts_hlc': 'a', 'amount': decimal.Decimal('1.500000000'), 'blob': b'\x00\x01'},
-        ])
+        backend.append_batch(
+            't',
+            [
+                {'_key_expr': 'k', '_ts_hlc': 'a', 'amount': decimal.Decimal('1.500000000'), 'blob': b'\x00\x01'},
+            ],
+        )
         row = backend.select('SELECT * FROM "t"')[0]
         assert row['amount'] == decimal.Decimal('1.500000000')
         assert row['blob'] == b'\x00\x01'
@@ -195,12 +212,19 @@ def test_dialect_json_value_executes_on_this_engine():
     """The fragment is only right if the engine agrees — so run it, don't just spell it."""
     backend = SQLiteBackend(':memory:')
     try:
-        backend.ensure_table('t', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'},
-                             ('_key_expr', '_ts_hlc'))
-        backend.append_batch('t', [{
-            '_key_expr': 'k', '_ts_hlc': 'a',
-            '_payload': '{"zones": {"department": 5}, "conf": {"d": 0.75}, "tag": {"k": "abc"}}',
-        }])
+        backend.ensure_table(
+            't', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'}, ('_key_expr', '_ts_hlc')
+        )
+        backend.append_batch(
+            't',
+            [
+                {
+                    '_key_expr': 'k',
+                    '_ts_hlc': 'a',
+                    '_payload': '{"zones": {"department": 5}, "conf": {"d": 0.75}, "tag": {"k": "abc"}}',
+                }
+            ],
+        )
         dialect = backend.dialect
 
         numeric = dialect.json_value('_payload', 'zones.department', text=False)
@@ -227,8 +251,9 @@ def test_ensure_json_index_creates_and_is_idempotent():
         _json_table(backend)
         backend.ensure_json_index('idx_t_json_zn_dept', 't', 'zn.department')
         backend.ensure_json_index('idx_t_json_zn_dept', 't', 'zn.department')  # re-registration is a no-op
-        names = {r['name'] for r in backend.select(
-            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 't'")}
+        names = {
+            r['name'] for r in backend.select("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 't'")
+        }
         assert 'idx_t_json_zn_dept' in names
     finally:
         backend.close()

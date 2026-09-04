@@ -14,7 +14,7 @@ class Msg(s.Seared):
 
 @s.seared
 class Obs(s.Seared):
-    id:          int   = s.Int(required=True)
+    id: int = s.Int(required=True)
     observed_at: float = s.Float(required=True)
 
 
@@ -81,8 +81,11 @@ def test_latest_survives_history_expiry_on_longer_horizon(tmp_path):
     store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(
-            Obs, retention='1d', time_field='observed_at',
-            latest_key=('id',), latest_retention='30d',
+            Obs,
+            retention='1d',
+            time_field='observed_at',
+            latest_key=('id',),
+            latest_retention='30d',
         )
         now = datetime.datetime.now(datetime.UTC)
         event = (now - datetime.timedelta(days=8)).timestamp()

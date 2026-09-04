@@ -15,22 +15,24 @@ empty string or a zero rather than ``None`` (a wire format without optionals).
 :data:`UNSET_FALSY` is that convention as a default; pass ``unset=(None,)`` for a
 strict one, or any tuple of values a given fleet treats as absent.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-import seared as s
 import zeared as z
 
 from ..errors import ConfigError, QueryError
 from ..log import get_logger
 from ..query import DEFAULT_CHUNK, MAX_LIMIT
-from ..store import Store
 from .async_store import AsyncStore
 
 if TYPE_CHECKING:
+    import seared as s
     from zeared import QueryContext, ZenohMeta
+
+    from ..store import Store
 
 _log = get_logger('mesh.binding')
 
@@ -80,7 +82,7 @@ class Binding:
         session: The zeared session to declare on, or ``None`` for the ambient one.
     """
 
-    __slots__ = ('_store', '_session', '_handles')
+    __slots__ = ('_handles', '_session', '_store')
 
     def __init__(self, store: AsyncStore | Store, *, session: Any = None) -> None:
         self._store = store if isinstance(store, AsyncStore) else AsyncStore(store)
@@ -139,21 +141,26 @@ class Binding:
         """
         target = store_as or cls
         if store_as is not None and via is None:
-            raise ConfigError(f'record({cls.__name__}, store_as={store_as.__name__}) needs via=<mapper>')
+            msg = f'record({cls.__name__}, store_as={store_as.__name__}) needs via=<mapper>'
+            raise ConfigError(msg)
         self._require_registered(target, f'record({cls.__name__})')
         mapper = via
         extras = tuple(getattr(cls, 'EXTRA_TOPICS', ()) or ())
         live_prefix = str(cls.TOPIC).split('{', 1)[0] if live_only else ''
         if live_only and not live_prefix:
-            raise ConfigError(
+            msg = (
                 f'record({cls.__name__}, live_only=True): TOPIC {cls.TOPIC!r} starts with a slot, '
-                'so there is no literal scope to match on',
+                'so there is no literal scope to match on'
+            )
+            raise ConfigError(
+                msg,
             )
         if extras and not live_only:
             _log.warning(
                 '%s declares EXTRA_TOPICS %s and is recorded from all of them; '
                 'pass live_only=True to record only the canonical scope',
-                cls.__name__, list(extras),
+                cls.__name__,
+                list(extras),
             )
 
         def _on_message(message: M, meta: ZenohMeta) -> None:
@@ -168,7 +175,7 @@ class Binding:
 
     # -- serve -------------------------------------------------------------
 
-    def serve_range[M: z.Message](  # noqa: PLR0913 — one keyword per request field it reads
+    def serve_range[M: z.Message](
         self,
         cls: type[M],
         *,
@@ -279,7 +286,7 @@ class Binding:
         self._handles.append(handle)
         return handle
 
-    def serve_snapshot[R: z.Message](  # noqa: PLR0913 — one keyword per request field it reads
+    def serve_snapshot[R: z.Message](
         self,
         cls: type[R],
         *,
@@ -335,8 +342,9 @@ class Binding:
         what = f'serve_snapshot({cls.__name__})'
         self._require_registered(stored_cls, what)
         if not self._store.store.registry.get(stored_cls).has_latest:
+            msg = f'{what}: {stored_cls.__name__} has no latest projection (register it with latest_key=…)'
             raise ConfigError(
-                f'{what}: {stored_cls.__name__} has no latest projection (register it with latest_key=…)',
+                msg,
             )
         request_cls = self._require_request(cls, 'serve_snapshot')
         shape = self._projection(cls, stored_cls, project, what)
@@ -427,15 +435,21 @@ class Binding:
         self._require_registered(stored_cls, f'serve_latest({cls.__name__})')
         stream = self._store.store.registry.get(stored_cls)
         if not stream.has_latest:
-            raise ConfigError(
+            msg = (
                 f'serve_latest({cls.__name__}): {stored_cls.__name__} has no latest projection '
-                '(register it with latest_key=…)',
+                '(register it with latest_key=…)'
+            )
+            raise ConfigError(
+                msg,
             )
         request_cls = self._require_request(cls, 'serve_latest')
         if project is None and stored_cls is not cls:
-            raise ConfigError(
+            msg = (
                 f'serve_latest({cls.__name__}, of={stored_cls.__name__}) needs project=<row, request -> reply>; '
-                'only the caller knows how a stored row becomes this reply',
+                'only the caller knows how a stored row becomes this reply'
+            )
+            raise ConfigError(
+                msg,
             )
         shape: Callable[[Any, Any], R] = project if project is not None else (lambda row, _request: row)
         key_columns = _as_mapping(key)
@@ -476,7 +490,7 @@ class Binding:
 
     @staticmethod
     def _projection[R](
-        cls: type[R],
+        reply_cls: type[R],
         stored_cls: type[s.Seared],
         project: Callable[[Any, Any], R] | None,
         what: str,
@@ -489,10 +503,13 @@ class Binding:
         """
         if project is not None:
             return project
-        if stored_cls is not cls:
-            raise ConfigError(
+        if stored_cls is not reply_cls:
+            msg = (
                 f'{what} with of={stored_cls.__name__} needs project=<row, request -> reply>; '
-                'only the caller knows how a stored row becomes this reply',
+                'only the caller knows how a stored row becomes this reply'
+            )
+            raise ConfigError(
+                msg,
             )
         return lambda row, _request: row
 
@@ -540,10 +557,13 @@ class Binding:
             elif target in stream.index:
                 columns[field] = target
             else:
-                raise ConfigError(
+                msg = (
                     f'{what}: {target!r} is neither an indexed dimension {sorted(stream.index)} '
                     f'nor a declared json_index path {sorted(stream.json_paths)} of '
-                    f'{stored_cls.__name__}',
+                    f'{stored_cls.__name__}'
+                )
+                raise ConfigError(
+                    msg,
                 )
         return columns, paths, computed
 
@@ -582,10 +602,13 @@ class Binding:
             elif target in stream.index:
                 columns[target] = value
             else:
-                raise QueryError(
+                msg = (
                     f'{target!r} is neither an indexed dimension {sorted(stream.index)} '
                     f'nor a declared json_index path {sorted(stream.json_paths)} of '
-                    f'{stored_cls.__name__}',
+                    f'{stored_cls.__name__}'
+                )
+                raise QueryError(
+                    msg,
                 )
         return columns, paths
 
@@ -594,14 +617,16 @@ class Binding:
         try:
             self._store.store.registry.get(cls)
         except Exception as exc:
-            raise ConfigError(f'{what}: {cls.__name__} is not registered on the store') from exc
+            msg = f'{what}: {cls.__name__} is not registered on the store'
+            raise ConfigError(msg) from exc
 
     @staticmethod
-    def _require_request(cls: type[z.Message], what: str) -> type:
+    def _require_request(message_cls: type[z.Message], what: str) -> type:
         """The class's ``REQUEST`` payload type — the thing that makes the binding typed."""
-        request_cls = getattr(cls, 'REQUEST', None)
+        request_cls = getattr(message_cls, 'REQUEST', None)
         if request_cls is None:
-            raise ConfigError(f'{what}({cls.__name__}): the class declares no REQUEST payload type')
+            msg = f'{what}({message_cls.__name__}): the class declares no REQUEST payload type'
+            raise ConfigError(msg)
         return request_cls
 
     @staticmethod

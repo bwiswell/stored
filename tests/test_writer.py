@@ -43,7 +43,8 @@ def test_manual_flush_is_idempotent_when_empty():
 def test_flush_error_is_swallowed():
     class BadBackend:
         def append_batch(self, table, rows):
-            raise RuntimeError('boom')
+            msg = 'boom'
+            raise RuntimeError(msg)
 
     writer = Writer(BadBackend(), flush_rows=1, flush_secs=0)
     writer.enqueue('t', {'a': 1})  # flush triggered; error logged, not raised

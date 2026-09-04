@@ -4,13 +4,16 @@ Every backend (DuckDB now, Postgres later) implements this narrow surface. The
 core — writer, query planner, TTL reaper — depends on the protocol only, never
 on a concrete engine, so a second backend is a drop-in.
 """
+
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from ..dialect import Dialect
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from datetime import datetime
+
+    from ..dialect import Dialect
 
 
 class StorageBackend(Protocol):

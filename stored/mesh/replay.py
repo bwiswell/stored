@@ -28,6 +28,7 @@ from a live one.
 replaying a ``RETAINED`` class cannot clobber the live retained value with a
 historical one.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -40,11 +41,10 @@ import zeared as z
 from ..errors import ConfigError
 from ..log import get_logger
 from ..query import DEFAULT_CHUNK, TimeBound
-from ..store import Store
 from .async_store import AsyncStore
 
 if TYPE_CHECKING:
-    pass
+    from ..store import Store
 
 _log = get_logger('mesh.replay')
 
@@ -67,7 +67,7 @@ class ReplayHandle:
         task: The asyncio task running the replay.
     """
 
-    __slots__ = ('_stop', '_progress', 'task')
+    __slots__ = ('_progress', '_stop', 'task')
 
     def __init__(self, task: asyncio.Task, stop: asyncio.Event, progress: dict[str, int]) -> None:
         self.task = task
@@ -106,13 +106,13 @@ class Replayer:
         session: The zeared session to publish on, or ``None`` for the ambient one.
     """
 
-    __slots__ = ('_store', '_session')
+    __slots__ = ('_session', '_store')
 
     def __init__(self, store: AsyncStore | Store, *, session: Any = None) -> None:
         self._store = store if isinstance(store, AsyncStore) else AsyncStore(store)
         self._session = session
 
-    async def replay[M: z.Message](  # noqa: PLR0913 — a window, a pace, and a destination
+    async def replay[M: z.Message](
         self,
         cls: type[M],
         *,
@@ -158,25 +158,48 @@ class Replayer:
         destination = self._resolve_topic(cls, topic)
         stream = self._store.store.registry.get(cls)
         if speed > 0 and stream.time_field is None:
-            raise ConfigError(
+            msg = (
                 f'replay({cls.__name__}, speed={speed}): pacing needs an event time; '
-                'register the stream with time_field=… or replay with speed=0',
+                'register the stream with time_field=… or replay with speed=0'
             )
+            raise ConfigError(msg)
         counter = progress if progress is not None else {'sent': 0}
         halt = stop if stop is not None else asyncio.Event()
         interval = (1.0 / max_rate) if max_rate else 0.0
         paced = speed > 0 or interval > 0
 
         _log.info(
-            'replay %s → %s (speed=%s, limit=%s)', cls.__name__, destination, speed or 'max', limit or 'all',
+            'replay %s → %s (speed=%s, limit=%s)',
+            cls.__name__,
+            destination,
+            speed or 'max',
+            limit or 'all',
         )
         if paced:
             return await self._paced(
-                cls, destination, stream.time_field, speed, interval, counter, halt,
-                since=since, until=until, limit=limit, chunk=chunk, **filters,
+                cls,
+                destination,
+                stream.time_field,
+                speed,
+                interval,
+                counter,
+                halt,
+                since=since,
+                until=until,
+                limit=limit,
+                chunk=chunk,
+                **filters,
             )
         return await self._as_fast_as_possible(
-            cls, destination, counter, halt, since=since, until=until, limit=limit, chunk=chunk, **filters,
+            cls,
+            destination,
+            counter,
+            halt,
+            since=since,
+            until=until,
+            limit=limit,
+            chunk=chunk,
+            **filters,
         )
 
     def start[M: z.Message](self, cls: type[M], **options: Any) -> ReplayHandle:
@@ -225,7 +248,7 @@ class Replayer:
             await self._send_page(cls, page, topic, counter)
         return counter['sent']
 
-    async def _paced[M: z.Message](  # noqa: PLR0913 — the pacing state is the argument list
+    async def _paced[M: z.Message](
         self,
         cls: type[M],
         topic: str,
@@ -247,7 +270,7 @@ class Replayer:
             if speed > 0 and time_field is not None:
                 current = _event_seconds(getattr(row, time_field, None))
                 if current is not None and previous is not None:
-                    delay = max(delay, max(0.0, (current - previous) / speed))
+                    delay = max(delay, 0.0, (current - previous) / speed)
                 if current is not None:
                     previous = current
             if delay > 0:
@@ -263,28 +286,32 @@ class Replayer:
     # -- helpers -----------------------------------------------------------
 
     async def _send_page[M: z.Message](
-        self, cls: type[M], page: list[M], topic: str, counter: dict[str, int],
+        self,
+        cls: type[M],
+        page: list[M],
+        topic: str,
+        counter: dict[str, int],
     ) -> None:
         """Publish one page in a single thread hop."""
         await z.asend_batch(cls, page, session=self._session, topic=topic, retain=False)
         counter['sent'] += len(page)
 
     @staticmethod
-    def _resolve_topic(cls: type[z.Message], topic: str | None) -> str:
+    def _resolve_topic(message_cls: type[z.Message], topic: str | None) -> str:
         """Pick the destination template: the caller's, or the class's sole replay scope."""
         if topic is not None:
             return topic
-        extras = tuple(getattr(cls, 'EXTRA_TOPICS', ()) or ())
+        extras = tuple(getattr(message_cls, 'EXTRA_TOPICS', ()) or ())
         if len(extras) == 1:
             return extras[0]
         if not extras:
-            raise ConfigError(
-                f'replay({cls.__name__}): no replay scope — declare one in EXTRA_TOPICS, '
-                'or pass topic= explicitly (cls.TOPIC republishes onto the live topic)',
+            msg = (
+                f'replay({message_cls.__name__}): no replay scope — declare one in EXTRA_TOPICS, '
+                'or pass topic= explicitly (cls.TOPIC republishes onto the live topic)'
             )
-        raise ConfigError(
-            f'replay({cls.__name__}): {len(extras)} declared EXTRA_TOPICS; pass topic= to choose one',
-        )
+            raise ConfigError(msg)
+        msg = f'replay({message_cls.__name__}): {len(extras)} declared EXTRA_TOPICS; pass topic= to choose one'
+        raise ConfigError(msg)
 
 
 __all__ = ['ReplayHandle', 'Replayer']

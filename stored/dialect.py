@@ -15,6 +15,7 @@ where they live rather than being spelled inline and rediscovered per backend:
 A dialect renders **fragments**, never whole statements: the planner still decides
 what to filter and in what order.
 """
+
 from __future__ import annotations
 
 
@@ -56,7 +57,7 @@ class Dialect:
         operator = 'GLOB' if wildcard else '='
         return f'"{column}" {operator} ?'
 
-    def json_value(self, column: str, path: str, *, text: bool) -> str:
+    def json_value(self, column: str, path: str, *, text: bool) -> str:  # noqa: ARG002 — see DuckDBDialect
         """An expression extracting ``path`` from a JSON ``column``.
 
         Args:

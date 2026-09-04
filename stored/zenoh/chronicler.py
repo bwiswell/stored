@@ -4,17 +4,20 @@ For each added stream it declares a subscriber (``on_message`` → record, using
 the 2-arg callback so the HLC timestamp arrives) and, for non-RETAINED classes,
 a queryable (``on_query`` → serve history).
 """
+
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import zeared as z
 
 from ..errors import RegistrationError
 from ..log import get_logger
-from ..store import Store
 from .serve import make_query_handler
+
+if TYPE_CHECKING:
+    from ..store import Store
 
 _log = get_logger('zenoh.chronicler')
 
@@ -30,7 +33,7 @@ class Chronicler:
         session: An open zeared session (timestamping enabled).
     """
 
-    __slots__ = ('_store', '_session', '_subscribers', '_queryables', '_stop')
+    __slots__ = ('_queryables', '_session', '_stop', '_store', '_subscribers')
 
     def __init__(self, store: Store, session: Any) -> None:
         self._store = store
@@ -103,7 +106,7 @@ class Chronicler:
         for handle in (*self._subscribers, *self._queryables):
             try:
                 handle.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — teardown must not mask the original failure
                 _log.exception('error closing chronicler handle')
         self._subscribers.clear()
         self._queryables.clear()

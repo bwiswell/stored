@@ -15,9 +15,9 @@ class Msg(s.Seared):
 
 @s.seared
 class Obs(s.Seared):
-    id:          int   = s.Int(required=True)
+    id: int = s.Int(required=True)
     observed_at: float = s.Float(required=True)
-    zones:       dict  = s.Dict(default_factory=dict)
+    zones: dict = s.Dict(default_factory=dict)
 
 
 def _stream():
@@ -164,7 +164,10 @@ def _zoned_stream():
 
 def test_plan_renders_a_path_filter_through_the_dialect():
     sql, params = query.plan(
-        _zoned_stream(), '', query.parse_window(), where={'zones.department': 5},
+        _zoned_stream(),
+        '',
+        query.parse_window(),
+        where={'zones.department': 5},
     )
     assert 'json_extract("_payload", \'$.zones.department\') = ?' in sql
     assert params[-1] == 5
@@ -174,8 +177,11 @@ def test_plan_path_filter_picks_the_text_extractor_for_a_string():
     from stored.dialect import DuckDBDialect
 
     sql, _ = query.plan(
-        _zoned_stream(), '', query.parse_window(),
-        where={'zones.department': 'front'}, dialect=DuckDBDialect(),
+        _zoned_stream(),
+        '',
+        query.parse_window(),
+        where={'zones.department': 'front'},
+        dialect=DuckDBDialect(),
     )
     assert 'json_extract_string("_payload", \'$.zones.department\')' in sql
 
@@ -187,7 +193,11 @@ def test_plan_rejects_an_undeclared_path():
 
 def test_plan_combines_path_filters_with_column_filters():
     sql, params = query.plan(
-        _zoned_stream(), '', query.parse_window(), {'id': 7}, where={'zones.department': 5},
+        _zoned_stream(),
+        '',
+        query.parse_window(),
+        {'id': 7},
+        where={'zones.department': 5},
     )
     assert '"id" = ?' in sql
     assert 'json_extract' in sql

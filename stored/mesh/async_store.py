@@ -10,21 +10,23 @@ service starts serving) and ``record`` (a buffered enqueue — a thread hop per
 message would cost more than the work it defers). Everything that reaches the
 backend is awaited.
 """
+
 from __future__ import annotations
 
 import asyncio
 import itertools
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 import seared as s
 
 from ..query import DEFAULT_CHUNK, TimeBound
-from ..store import Store
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from ..registry import Stream
     from ..row import Meta
+    from ..store import Store
 
 
 class AsyncStore:
@@ -98,7 +100,14 @@ class AsyncStore:
         """Await :meth:`stored.Store.query` on a worker thread. Returns ``cls`` instances."""
         return await asyncio.to_thread(
             lambda: self._store.query(
-                cls, key=key, since=since, until=until, limit=limit, order=order, where=where, **filters,
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                where=where,
+                **filters,
             ),
         )
 
@@ -121,7 +130,14 @@ class AsyncStore:
         """Await :meth:`stored.Store.query_latest` — current state for every matching entity."""
         return await asyncio.to_thread(
             lambda: self._store.query_latest(
-                cls, key=key, since=since, until=until, limit=limit, order=order, where=where, **filters,
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                where=where,
+                **filters,
             ),
         )
 
@@ -145,8 +161,15 @@ class AsyncStore:
         """
         walk = await asyncio.to_thread(
             lambda: self._store.iter_latest(
-                cls, key=key, since=since, until=until, limit=limit, order=order, chunk=chunk,
-                where=where, **filters,
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                chunk=chunk,
+                where=where,
+                **filters,
             ),
         )
         try:
@@ -159,7 +182,7 @@ class AsyncStore:
         finally:
             walk.close()
 
-    async def iter[M: s.Seared](  # noqa: A003 — mirrors ``Store.iter``
+    async def iter[M: s.Seared](
         self,
         cls: type[M],
         *,
@@ -200,8 +223,15 @@ class AsyncStore:
         """
         walk = await asyncio.to_thread(
             lambda: self._store.iter(
-                cls, key=key, since=since, until=until, limit=limit, order=order, chunk=chunk,
-                where=where, **filters,
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                chunk=chunk,
+                where=where,
+                **filters,
             ),
         )
         try:

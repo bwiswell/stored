@@ -1,4 +1,5 @@
 """The mesh binding: subscribe-and-record, typed range queries, and last-known reads."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,13 +13,14 @@ from stored.mesh import AsyncStore, Binding
 
 # -- contracts (deliberately generic: the binding knows no fleet's vocabulary) --
 
+
 @zeared.zeared
 class HistoryRequest(zeared.Zeared):
-    source:  str   = zeared.Str(default='')
-    kind:    str   = zeared.Str(default='')
+    source: str = zeared.Str(default='')
+    kind: str = zeared.Str(default='')
     from_ts: float = zeared.Float(default=0.0)
-    to_ts:   float = zeared.Float(default=0.0)
-    limit:   int   = zeared.Int(default=100)
+    to_ts: float = zeared.Float(default=0.0)
+    limit: int = zeared.Int(default=100)
 
 
 @zeared.zeared
@@ -29,10 +31,10 @@ class Event(zeared.Message):
     SCHEMA = '1'
     REQUEST = HistoryRequest
 
-    source:   str   = zeared.Str(required=True)
-    kind:     str   = zeared.Str(required=True)
+    source: str = zeared.Str(required=True)
+    kind: str = zeared.Str(required=True)
     raised_at: float = zeared.Float(required=True)
-    note:     str   = zeared.Str(default='')
+    note: str = zeared.Str(default='')
 
 
 @zeared.zeared
@@ -40,23 +42,23 @@ class Alarm(zeared.Message):
     """A source contract that normalizes into :class:`Event`."""
 
     TOPIC = 'test/alarm/{source}'
-    source: str   = zeared.Str(required=True)
-    at:     float = zeared.Float(required=True)
+    source: str = zeared.Str(required=True)
+    at: float = zeared.Float(required=True)
 
 
 @zeared.zeared
 class Position(zeared.Message):
     TOPIC = 'test/position'
-    source:      str   = zeared.Str(required=True)
-    epc:         str   = zeared.Str(required=True)
-    x:           float = zeared.Float(default=0.0)
+    source: str = zeared.Str(required=True)
+    epc: str = zeared.Str(required=True)
+    x: float = zeared.Float(default=0.0)
     observed_at: float = zeared.Float(required=True)
 
 
 @zeared.zeared
 class LastPositionRequest(zeared.Zeared):
     source: str = zeared.Str(default='')
-    epc:    str = zeared.Str(default='')
+    epc: str = zeared.Str(default='')
 
 
 @zeared.zeared
@@ -67,18 +69,18 @@ class LastPosition(zeared.Message):
     SCHEMA = '1'
     REQUEST = LastPositionRequest
 
-    source: str   = zeared.Str(required=True)
-    epc:    str   = zeared.Str(required=True)
-    found:  bool  = zeared.Bool(default=False)
-    x:      float = zeared.Float(default=0.0)
+    source: str = zeared.Str(required=True)
+    epc: str = zeared.Str(required=True)
+    found: bool = zeared.Bool(default=False)
+    x: float = zeared.Float(default=0.0)
 
 
 @zeared.zeared
 class ZoneRequest(zeared.Zeared):
-    zone:   int = zeared.Int(default=0)
-    layer:  str = zeared.Str(default='department')
+    zone: int = zeared.Int(default=0)
+    layer: str = zeared.Str(default='department')
     source: str = zeared.Str(default='')
-    limit:  int = zeared.Int(default=100)
+    limit: int = zeared.Int(default=100)
 
 
 @zeared.zeared
@@ -89,10 +91,10 @@ class Placed(zeared.Message):
     SCHEMA = '1'
     REQUEST = ZoneRequest
 
-    source:      str            = zeared.Str(required=True)
-    epc:         str            = zeared.Str(required=True)
-    zones:       dict[str, int] = zeared.Dict(default_factory=dict)
-    observed_at: float          = zeared.Float(required=True)
+    source: str = zeared.Str(required=True)
+    epc: str = zeared.Str(required=True)
+    zones: dict[str, int] = zeared.Dict(default_factory=dict)
+    observed_at: float = zeared.Float(required=True)
 
 
 @zeared.zeared
@@ -103,8 +105,8 @@ class ZoneOccupant(zeared.Message):
     SCHEMA = '1'
     REQUEST = ZoneRequest
 
-    epc:     str   = zeared.Str(required=True)
-    zone:    int   = zeared.Int(default=0)
+    epc: str = zeared.Str(required=True)
+    zone: int = zeared.Int(default=0)
     seen_at: float = zeared.Float(default=0.0)
 
 
@@ -142,6 +144,7 @@ def no_position(request: LastPositionRequest) -> LastPosition:
 
 # -- helpers -----------------------------------------------------------------
 
+
 class _CountingBackend:
     """Delegates to a real backend, counting ``select`` calls (page-count proof)."""
 
@@ -155,7 +158,6 @@ class _CountingBackend:
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
-
 
 
 async def _settle(seconds: float = 0.25):
@@ -175,6 +177,7 @@ def _store():
 
 
 # -- record ------------------------------------------------------------------
+
 
 async def test_record_persists_a_subscribed_contract(session):
     zeared.session = session
@@ -215,6 +218,7 @@ async def test_record_normalizes_one_contract_into_another(session):
 
 
 # -- serve_range -------------------------------------------------------------
+
 
 async def test_serve_range_answers_a_typed_request(session):
     zeared.session = session
@@ -271,6 +275,7 @@ async def test_serve_range_sentinel_policy_is_configurable(session):
 
 # -- serve_latest ------------------------------------------------------------
 
+
 async def test_serve_latest_projects_a_row_into_its_reply(session):
     zeared.session = session
     store, binding = _store(), None
@@ -290,13 +295,17 @@ async def test_serve_latest_projects_a_row_into_its_reply(session):
         await _settle()
 
         found = await zeared.aquery_one(
-            LastPosition, request=LastPositionRequest(source='rtls', epc='E1'), timeout=5.0,
+            LastPosition,
+            request=LastPositionRequest(source='rtls', epc='E1'),
+            timeout=5.0,
         )
         assert found is not None
         assert (found.found, found.x) == (True, 9.0)  # newest wins
 
         absent = await zeared.aquery_one(
-            LastPosition, request=LastPositionRequest(source='rtls', epc='NOPE'), timeout=5.0,
+            LastPosition,
+            request=LastPositionRequest(source='rtls', epc='NOPE'),
+            timeout=5.0,
         )
         assert absent is not None
         assert absent.found is False
@@ -330,6 +339,7 @@ async def test_serve_latest_identity_projection_for_a_double_duty_row(session):
 
 
 # -- bind-time validation ----------------------------------------------------
+
 
 async def test_binding_rejects_incoherent_declarations(session):
     zeared.session = session
@@ -384,6 +394,7 @@ async def test_close_releases_every_handle(session):
 
 # -- streamed replies --------------------------------------------------------
 
+
 async def test_streamed_range_matches_the_collected_one(session):
     """Same replies, produced lazily — streaming is not a contract change."""
     zeared.session = session
@@ -395,7 +406,12 @@ async def test_streamed_range_matches_the_collected_one(session):
 
         binding = Binding(store, session=session)
         binding.serve_range(
-            Event, filters=('source',), since='from_ts', limit='limit', stream=True, chunk=4,
+            Event,
+            filters=('source',),
+            since='from_ts',
+            limit='limit',
+            stream=True,
+            chunk=4,
         )
         await _settle()
 
@@ -479,6 +495,7 @@ async def test_streamed_range_is_capped_by_default(session):
 
 # -- current state over the mesh --------------------------------------------
 
+
 async def test_serve_snapshot_answers_one_reply_per_entity(session):
     """The console's question: everything currently in department 5."""
     zeared.session = session
@@ -534,6 +551,7 @@ async def test_serve_snapshot_streams(session):
 
 
 # -- path filters need no new binding API ------------------------------------
+
 
 async def test_serve_range_filters_on_a_path_with_no_new_api(session):
     """A declared path is just another filter target — the mesh layer does not change."""
@@ -594,6 +612,7 @@ async def test_serve_snapshot_needs_a_latest_projection(session):
 
 # -- a target the caller names ----------------------------------------------
 
+
 async def test_a_computed_target_picks_the_layer_per_request(session):
     """Zone layers are open-ended, so the request names one and the target follows."""
     zeared.session = session
@@ -601,13 +620,18 @@ async def test_a_computed_target_picks_the_layer_per_request(session):
     binding = None
     try:
         store.register(
-            Placed, index=('source',), time_field='observed_at', latest_key=('source', 'epc'),
+            Placed,
+            index=('source',),
+            time_field='observed_at',
+            latest_key=('source', 'epc'),
             json_index=('zones.department', 'zones.front_back'),
         )
-        store.record(Placed, Placed(source='rtls', epc='E1',
-                                    zones={'department': 5, 'front_back': 1}, observed_at=1000.0))
-        store.record(Placed, Placed(source='rtls', epc='E2',
-                                    zones={'department': 6, 'front_back': 1}, observed_at=1001.0))
+        store.record(
+            Placed, Placed(source='rtls', epc='E1', zones={'department': 5, 'front_back': 1}, observed_at=1000.0)
+        )
+        store.record(
+            Placed, Placed(source='rtls', epc='E2', zones={'department': 6, 'front_back': 1}, observed_at=1001.0)
+        )
         store.store.flush()
 
         binding = Binding(store, session=session)
@@ -615,12 +639,16 @@ async def test_a_computed_target_picks_the_layer_per_request(session):
         await _settle()
 
         by_department = await zeared.aquery(
-            Placed, request=ZoneRequest(zone=5, layer='department'), timeout=5.0,
+            Placed,
+            request=ZoneRequest(zone=5, layer='department'),
+            timeout=5.0,
         )
         assert [r.epc for r in by_department] == ['E1']
 
         by_aisle_side = await zeared.aquery(
-            Placed, request=ZoneRequest(zone=1, layer='front_back'), timeout=5.0,
+            Placed,
+            request=ZoneRequest(zone=1, layer='front_back'),
+            timeout=5.0,
         )
         assert sorted(r.epc for r in by_aisle_side) == ['E1', 'E2']
     finally:
@@ -648,7 +676,9 @@ async def test_an_undeclared_layer_errors_the_query_rather_than_answering_unfilt
         errors: list[Exception] = []
         with caplog.at_level('WARNING'):
             answered = await zeared.aquery(
-                Placed, request=ZoneRequest(zone=5, layer='aisle'), timeout=5.0,
+                Placed,
+                request=ZoneRequest(zone=5, layer='aisle'),
+                timeout=5.0,
                 on_error=lambda exc, _raw: errors.append(exc),
             )
 
@@ -661,6 +691,7 @@ async def test_an_undeclared_layer_errors_the_query_rather_than_answering_unfilt
 
 
 # -- serve_range projects, like its siblings ---------------------------------
+
 
 async def test_serve_range_projects_a_row_into_a_different_reply(session):
     zeared.session = session

@@ -13,6 +13,7 @@ do need the transport resolve lazily (PEP 562), the same pattern the top-level
 ``stored.Chronicler`` re-export uses, so ``from stored.mesh import AsyncStore``
 never pays for Zenoh.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -41,4 +42,5 @@ def __getattr__(name: str) -> object:
         from . import replay
 
         return getattr(replay, name)
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+    msg = f'module {__name__!r} has no attribute {name!r}'
+    raise AttributeError(msg)

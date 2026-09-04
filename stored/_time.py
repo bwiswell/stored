@@ -5,6 +5,7 @@ dependency-free across backends — DuckDB's client would otherwise need ``pytz`
 to round-trip ``TIMESTAMPTZ``, and the SQLite backend stores ISO-8601 text whose
 lexical order is chronological. All stored times are UTC by construction.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -44,7 +45,8 @@ def parse_duration(text: str) -> datetime.timedelta:
     """
     match = _DURATION.match(text.strip().lower())
     if match is None:
-        raise ValueError(f'invalid duration {text!r} (expected e.g. 7d, 48h, 30m)')
+        msg = f'invalid duration {text!r} (expected e.g. 7d, 48h, 30m)'
+        raise ValueError(msg)
     return datetime.timedelta(**{_DURATION_UNIT[match.group(2)]: float(match.group(1))})
 
 
@@ -75,11 +77,18 @@ def duration_text(value: Duration) -> str:
     elif isinstance(value, (int, float)):
         seconds = float(value)
     else:
-        raise ValueError(f'invalid duration {value!r} (expected a string, seconds, or a timedelta)')
+        # ValueError, not TypeError (TRY004): a horizon is invalid for one reason as far
+        # as the caller is concerned, and ``Store.register`` maps that single failure onto
+        # ConfigError. Splitting it would make `retention=object()` fail differently from
+        # `retention='nonsense'` for no one's benefit.
+        msg = f'invalid duration {value!r} (expected a string, seconds, or a timedelta)'
+        raise ValueError(msg)  # noqa: TRY004
     if not math.isfinite(seconds):
-        raise ValueError(f'invalid duration {value!r} (not a finite number of seconds)')
+        msg = f'invalid duration {value!r} (not a finite number of seconds)'
+        raise ValueError(msg)
     if seconds < 0:
-        raise ValueError(f'invalid duration {value!r} (negative)')
+        msg = f'invalid duration {value!r} (negative)'
+        raise ValueError(msg)
     # Six decimals is well past any sane retention horizon and keeps the
     # rendering inside the string grammar (no exponent notation).
     text = f'{seconds:.6f}'.rstrip('0').rstrip('.') or '0'

@@ -11,13 +11,15 @@ Nested/collection/array fields have no column; they round-trip through
    rehydration; slimming it to just the non-column fields is a later
    optimization.
 """
+
 from __future__ import annotations
 
-from typing import Any
-
-import seared as s
+from typing import TYPE_CHECKING, Any
 
 from .errors import SchemaError
+
+if TYPE_CHECKING:
+    import seared as s
 
 # Backend-neutral column type names (DuckDB spelling; the backend may remap).
 # Scalar seared field class name -> column type.
@@ -57,8 +59,6 @@ META_COLUMNS: dict[str, str] = {
 }
 
 PRIMARY_KEY: tuple[str, str] = ('_key_expr', '_ts_hlc')
-
-
 
 
 def json_index_specs(table: str, paths: dict[str, str]) -> tuple[tuple[str, str], ...]:
@@ -105,7 +105,8 @@ def wire_path(cls: type[s.Seared], path: str) -> str:
     for attr, wire, _field in cls.__seared_fields__:
         if attr == head:
             return f'{wire}.{tail}' if tail else wire
-    raise SchemaError(f'{path!r}: {head!r} is not a field of {cls.__name__}')
+    msg = f'{path!r}: {head!r} is not a field of {cls.__name__}'
+    raise SchemaError(msg)
 
 
 def index_specs(
@@ -144,6 +145,7 @@ def index_specs(
     specs = [(f'idx_{table}_time', (time_column, '_ts_hlc', '_key_expr'))]
     specs.extend((f'idx_{table}_{dim}', (dim,)) for dim in dimensions if dim not in served_by_pk)
     return tuple(specs)
+
 
 #: Temporal-axis column names. ``_issued_at`` is the mesh delivery/issue time (the
 #: default axis for retention + range queries); ``_event_at`` is the normalized
@@ -212,17 +214,17 @@ def latest_table_name(cls: type) -> str:
 
 
 __all__ = [
-    'SCALAR_TYPES',
     'COMPLEX_FIELDS',
+    'EVENT_AT',
+    'ISSUED_AT',
     'META_COLUMNS',
     'PRIMARY_KEY',
-    'ISSUED_AT',
-    'EVENT_AT',
+    'SCALAR_TYPES',
     'TIME_FIELD_KINDS',
     'column_type',
     'derive_columns',
-    'table_name',
-    'latest_table_name',
     'json_index_specs',
+    'latest_table_name',
+    'table_name',
     'wire_path',
 ]
