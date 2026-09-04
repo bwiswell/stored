@@ -73,6 +73,59 @@ class LastPosition(zeared.Message):
     x:      float = zeared.Float(default=0.0)
 
 
+@zeared.zeared
+class ZoneRequest(zeared.Zeared):
+    zone:   int = zeared.Int(default=0)
+    source: str = zeared.Str(default='')
+    limit:  int = zeared.Int(default=100)
+
+
+@zeared.zeared
+class Placed(zeared.Message):
+    """A row that doubles as its own reply, with open-ended zone layers."""
+
+    TOPIC = 'test/placed'
+    SCHEMA = '1'
+    REQUEST = ZoneRequest
+
+    source:      str            = zeared.Str(required=True)
+    epc:         str            = zeared.Str(required=True)
+    zones:       dict[str, int] = zeared.Dict(default_factory=dict)
+    observed_at: float          = zeared.Float(required=True)
+
+
+@zeared.zeared
+class ZoneOccupant(zeared.Message):
+    """A reply shaped differently from the row it comes from."""
+
+    TOPIC = 'test/history/occupant'
+    SCHEMA = '1'
+    REQUEST = ZoneRequest
+
+    epc:     str   = zeared.Str(required=True)
+    zone:    int   = zeared.Int(default=0)
+    seen_at: float = zeared.Float(default=0.0)
+
+
+def to_occupant(row: Placed, request: ZoneRequest) -> ZoneOccupant:
+    return ZoneOccupant(epc=row.epc, zone=request.zone, seen_at=row.observed_at)
+
+
+def _zoned_store():
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    store.register(
+        Placed,
+        index=('source',),
+        time_field='observed_at',
+        latest_key=('source', 'epc'),
+        json_index=('zones.department',),
+    )
+    for epc, dept, at in [('E1', 5, 1000.0), ('E2', 6, 1001.0), ('E1', 5, 2000.0), ('E3', 5, 2001.0)]:
+        store.record(Placed, Placed(source='rtls', epc=epc, zones={'department': dept}, observed_at=at))
+    store.store.flush()
+    return store
+
+
 def from_alarm(alarm: Alarm) -> Event:
     """The caller-owned normalizer — domain logic that happens to run on the record path."""
     return Event(source=alarm.source, kind='alarm', raised_at=alarm.at, note='mapped')
@@ -420,4 +473,119 @@ async def test_streamed_range_is_capped_by_default(session):
     finally:
         if binding:
             binding.close()
+        await store.close()
+
+
+# -- current state over the mesh --------------------------------------------
+
+async def test_serve_snapshot_answers_one_reply_per_entity(session):
+    """The console's question: everything currently in department 5."""
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(Placed, filters={'zone': 'zones.department', 'source': 'source'}, limit='limit')
+        await _settle()
+
+        in_five = await zeared.aquery(Placed, request=ZoneRequest(zone=5), timeout=5.0)
+        assert sorted(r.epc for r in in_five) == ['E1', 'E3']  # one per entity, not per observation
+        assert {r.observed_at for r in in_five} == {2000.0, 2001.0}  # …and the newest of each
+
+        everything = await zeared.aquery(Placed, request=ZoneRequest(), timeout=5.0)
+        assert sorted(r.epc for r in everything) == ['E1', 'E2', 'E3']
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_serve_snapshot_projects_when_the_reply_differs(session):
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(ZoneOccupant, of=Placed, filters={'zone': 'zones.department'}, project=to_occupant)
+        await _settle()
+
+        occupants = await zeared.aquery(ZoneOccupant, request=ZoneRequest(zone=5), timeout=5.0)
+        assert sorted(o.epc for o in occupants) == ['E1', 'E3']
+        assert {o.zone for o in occupants} == {5}
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_serve_snapshot_streams(session):
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(Placed, filters={'zone': 'zones.department'}, stream=True, chunk=1)
+        await _settle()
+
+        seen = [r.epc async for r in zeared.aquery_iter(Placed, request=ZoneRequest(zone=5), timeout=5.0)]
+        assert sorted(seen) == ['E1', 'E3']
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+# -- path filters need no new binding API ------------------------------------
+
+async def test_serve_range_filters_on_a_path_with_no_new_api(session):
+    """A declared path is just another filter target — the mesh layer does not change."""
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_range(Placed, filters={'zone': 'zones.department'}, limit='limit')
+        await _settle()
+
+        history = await zeared.aquery(Placed, request=ZoneRequest(zone=5), timeout=5.0)
+        assert sorted(r.epc for r in history) == ['E1', 'E1', 'E3']  # every observation in that zone
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_filters_resolve_against_the_declaration(session):
+    """A target is a column or a path because the stream says so — and neither is a bind-time error."""
+    zeared.session = session
+    store = _zoned_store()
+    binding = Binding(store, session=session)
+    try:
+        with pytest.raises(ConfigError, match='neither an indexed dimension'):
+            binding.serve_range(Placed, filters={'zone': 'zones.aisle'})  # path never declared
+        with pytest.raises(ConfigError, match='neither an indexed dimension'):
+            binding.serve_snapshot(Placed, filters={'epc': 'epc'})  # column never indexed
+    finally:
+        binding.close()
+        await store.close()
+
+
+async def test_serve_snapshot_needs_a_projection_it_can_justify(session):
+    zeared.session = session
+    store = _zoned_store()
+    binding = Binding(store, session=session)
+    try:
+        with pytest.raises(ConfigError, match='needs project'):
+            binding.serve_snapshot(ZoneOccupant, of=Placed, filters={'zone': 'zones.department'})
+    finally:
+        binding.close()
+        await store.close()
+
+
+async def test_serve_snapshot_needs_a_latest_projection(session):
+    zeared.session = session
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    binding = Binding(store, session=session)
+    try:
+        store.register(Placed, index=('source',), time_field='observed_at')  # no latest_key
+        with pytest.raises(ConfigError, match='no latest projection'):
+            binding.serve_snapshot(Placed)
+    finally:
+        binding.close()
         await store.close()

@@ -6,7 +6,9 @@ shapes a **service** binds. Two inhabitants today:
 
 - **`AsyncStore`** — an awaitable view of a blocking `Store`, for services on an
   event loop. Needs no transport at all.
-- **`Binding`** — subscribers and queryables declared against typed contracts.
+- **`Binding`** — subscribers and queryables declared against typed contracts:
+  record, time-range history, last-known for one entity, and current state for a
+  population.
 
 Everything here speaks *zeared* vocabulary — a message class, its `REQUEST`
 payload, a queryable, a projection function — and nothing else. No contract,
@@ -103,6 +105,39 @@ Two properties of Zenoh queries shape the defaults:
 
 `stream` is opt-in. Collecting is the better default for the small bounded reads
 most queryables serve, and switching an existing binding is a one-word change.
+
+### `serve_snapshot(cls, of=…, filters=…, project=…)`
+
+*Current state*, multi-reply: the newest row of every matching entity, which is what
+an operator console asks for.
+
+```python
+binding.serve_snapshot(Placed, filters={'zone': 'zones.department', 'source': 'source'},
+                       limit='limit')
+```
+
+`serve_range` answers "what happened"; this answers "what is the case". Same
+declaration, pointed at the latest projection — so `since`/`until` narrow on **last
+seen**, not on when a row was recorded, and `stream=True` works the same way (a floor
+with 100k tags is exactly when you want it). `of=` + `project=` shape a reply that
+differs from the stored row, as in `serve_latest`; a row type that doubles as its own
+reply needs neither.
+
+### Filtering on a path inside a `dict`
+
+A filter target is resolved against **what the stream declared** — a name in
+`index=` filters a column, a name in `json_index=` filters inside a `Dict` — so a
+path needs no new binding API at all:
+
+```python
+store.register(Placed, index=('source',), json_index=('zones.department',), …)
+
+binding.serve_range(Placed,    filters={'zone': 'zones.department'})   # what happened there
+binding.serve_snapshot(Placed, filters={'zone': 'zones.department'})   # who is there now
+```
+
+A target that names neither is a `ConfigError` **when the binding is declared**,
+rather than a query that quietly matches nothing.
 
 ### `serve_latest(cls, of=…, project=…, missing=…)`
 
