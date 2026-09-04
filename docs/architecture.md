@@ -13,7 +13,7 @@ stored.zenoh  (zeared — a core dependency; Chronicler also re-exported lazily 
    session (timestamped) · daemon · CLI
 ──────────────────────────────────────────────────────────────────
 stored  (core: seared + stdlib sqlite3)
-   Store · StreamRegistry · schema · row · Writer · query · Reaper · streams
+   Store · StreamRegistry · schema · row · Writer · query · Reaper · streams · dialect
 ──────────────────────────────────────────────────────────────────
 StorageBackend
    SQLiteBackend (default)  ·  DuckDBBackend (stored[duckdb])  ·  [ Postgres — later ]
@@ -31,6 +31,25 @@ transport itself. Its first inhabitant, `AsyncStore`, needs no transport at all 
 is asyncio over the core, so `from stored.mesh import AsyncStore` stays
 Zenoh-free (a guarded invariant), and the names in that namespace that *do* need
 `zeared` resolve lazily.
+
+### What a dialect is for
+
+The planner is engine-neutral — quoted identifiers, `?` parameters, ordinary
+`WHERE`/`ORDER BY`/`LIMIT` — except for two fragments that are not portable, which
+`stored.dialect` owns rather than leaving inline:
+
+- **Wildcard key matching.** SQLite and DuckDB both have `GLOB`; Postgres (below,
+  later) has no such operator, so a dialect returns the whole predicate rather than
+  an operator name.
+- **Reaching into `_payload`.** SQLite's `json_extract` compares against a bound
+  scalar of any type. DuckDB's returns JSON, so a *text* comparison needs
+  `json_extract_string` — and getting it wrong there is an error, not a silent
+  mismatch (measured; the tests pin it).
+
+The backend supplies its dialect; `Store` hands it to the planner. `plan()` also
+takes the **table** to read, defaulting to the stream's history table — the latest
+projection carries the same columns and the same sort key, so a current-state read
+is the same plan pointed elsewhere.
 
 ## The gap it fills
 

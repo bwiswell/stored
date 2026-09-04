@@ -189,3 +189,28 @@ def test_ensure_index_composite_columns():
         assert [r['name'] for r in rows] == ['_issued_at', '_ts_hlc', '_key_expr']
     finally:
         backend.close()
+
+
+def test_dialect_json_value_executes_on_this_engine():
+    """The fragment is only right if the engine agrees — so run it, don't just spell it."""
+    backend = SQLiteBackend(':memory:')
+    try:
+        backend.ensure_table('t', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'},
+                             ('_key_expr', '_ts_hlc'))
+        backend.append_batch('t', [{
+            '_key_expr': 'k', '_ts_hlc': 'a',
+            '_payload': '{"zones": {"department": 5}, "conf": {"d": 0.75}, "tag": {"k": "abc"}}',
+        }])
+        dialect = backend.dialect
+
+        numeric = dialect.json_value('_payload', 'zones.department', text=False)
+        assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {numeric} = ?', [5])  # noqa: S608 — rendered fragment
+        floating = dialect.json_value('_payload', 'conf.d', text=False)
+        assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {floating} = ?', [0.75])  # noqa: S608
+        textual = dialect.json_value('_payload', 'tag.k', text=True)
+        assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {textual} = ?', ['abc'])  # noqa: S608
+
+        missing = dialect.json_value('_payload', 'zones.nope', text=False)
+        assert backend.select(f'SELECT 1 AS hit FROM "t" WHERE {missing} = ?', [5]) == []  # noqa: S608
+    finally:
+        backend.close()

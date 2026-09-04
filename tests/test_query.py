@@ -121,3 +121,37 @@ def test_plan_after_flips_with_descending_order():
 def test_plan_skip_null_time():
     sql, _ = query.plan(_stream(), '', query.parse_window(), skip_null_time=True)
     assert '"_issued_at" IS NOT NULL' in sql
+
+
+class _LoudDialect(query.Dialect):
+    """A dialect that spells key matching differently — proof the seam is load-bearing."""
+
+    name = 'loud'
+
+    def key_match(self, column: str, *, wildcard: bool) -> str:
+        return f'MATCHES({column}, ?)' if wildcard else f'IS_EXACTLY({column}, ?)'
+
+
+def test_plan_reads_the_stream_table_by_default():
+    sql, _ = query.plan(_stream(), '', query.parse_window())
+    assert 'FROM "stream_msg"' in sql
+
+
+def test_plan_can_be_pointed_at_another_table():
+    """The latest projection has the same columns, so a read is the same plan elsewhere."""
+    sql, _ = query.plan(_stream(), '', query.parse_window(), table='latest_msg')
+    assert 'FROM "latest_msg"' in sql
+    assert 'FROM "stream_msg"' not in sql
+
+
+def test_plan_spells_key_matching_through_the_dialect():
+    loud = _LoudDialect()
+    exact, _ = query.plan(_stream(), 'rio/a', query.parse_window(), dialect=loud)
+    globbed, _ = query.plan(_stream(), 'rio/*', query.parse_window(), dialect=loud)
+    assert 'IS_EXACTLY(_key_expr, ?)' in exact
+    assert 'MATCHES(_key_expr, ?)' in globbed
+
+
+def test_plan_defaults_to_the_sqlite_spelling():
+    sql, _ = query.plan(_stream(), 'rio/*', query.parse_window())
+    assert '"_key_expr" GLOB ?' in sql
