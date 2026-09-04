@@ -61,6 +61,25 @@ Cls.query(id=…, params={from,to,limit})   [zeared getter]
 (read-your-writes). Consumers use the *unchanged* `zeared` getter — history
 comes back as ordinary typed `Cls` instances.
 
+### Streaming reads
+
+`Store.iter` is the same plan walked in pages instead of materialized:
+
+```text
+Store.iter(cls, since=…)          — flush once, at the call
+   → plan(..., after=anchor)      — keyset predicate on (time, _ts_hlc, _key_expr)
+   → select LIMIT <chunk>         — lock held for one page, then released
+   → yield rehydrate(cls, row)    — a page in memory, never the window
+   → anchor = last row            — resume; a short page ends the walk
+```
+
+The anchor is the full sort key, and `(_key_expr, _ts_hlc)` is the primary key, so
+the triple is a total order: a walk resumes exactly where it stopped even though
+the writer kept appending between pages. That makes the walk **not a snapshot** —
+rows recorded mid-walk that sort after the cursor are included — and it skips rows
+whose temporal axis is `NULL`, which have no place on the axis being resumed
+along.
+
 ### The RETAINED constraint
 
 `zeared` forbids `on_query` on a `RETAINED` class (retention already owns a

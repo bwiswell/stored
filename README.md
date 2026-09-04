@@ -21,6 +21,9 @@ sister that remembers.
 - **Event-time aware.** Point a stream at a payload timestamp (`time_field`) and
   retention, range queries, and last-known key off **when it happened**, not when
   the mesh delivered it.
+- **Stream it, don't buffer it.** `store.iter(cls, …)` walks a window in bounded
+  memory — a page at a time, resumable, and without holding the store lock or the
+  whole result set.
 - **Bounded by design.** Per-stream **TTL** expiry now; compressed **Parquet
   archival** of cold data on the roadmap.
 - **Lean, layered deps.** `stored` needs `seared` + `zeared`; persistence rides
@@ -57,6 +60,12 @@ store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
 history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → list[Telemetry]
 newest  = store.latest(Telemetry, id=7)                  # → Telemetry | None, however old
 
+for row in store.query(Telemetry, id=7, since='-1h', limit=5000):
+    ...                                                  # one list, capped
+
+for row in store.iter(Telemetry, since='-30d'):          # streamed, unbounded
+    ...                                                  # a page in memory at a time
+
 store.flush(); store.prune(); store.close()
 ```
 
@@ -66,6 +75,13 @@ always see prior writes. Reads are **typed on the class you ask for** —
 `Telemetry | None` to a type checker, with no cast at the call site. Retention
 horizons accept the duration grammar (`'7d'`), a number of seconds, or a
 `datetime.timedelta`.
+
+`query` returns one list (capped, and the right shape for a request/reply). `iter`
+**streams** the same window a page at a time, for windows larger than memory: it
+flushes once when called, then walks a keyset cursor, releasing the store lock
+between pages so recording continues underneath it. Registration emits the
+secondary indexes those reads want — one on the temporal axis, one per declared
+`index=` dimension.
 
 ## Mesh: the chronicler
 

@@ -23,8 +23,17 @@ from .registry import Stream
 #: ``time_field`` (event time), no string round-trip.
 TimeBound = str | int | float | datetime | None
 
+#: A pagination anchor: the ``(time_column, _ts_hlc, _key_expr)`` values of the last
+#: row already yielded. Those three are a **total** order — the first two order the
+#: stream, and ``(_key_expr, _ts_hlc)`` is the primary key, so the triple is unique —
+#: which is what lets a walk resume exactly where it stopped.
+Anchor = tuple[Any, str, str]
+
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 100_000
+
+#: Rows fetched per page by ``Store.iter``. Bounds peak memory to one page.
+DEFAULT_CHUNK = 1000
 
 _RELATIVE = re.compile(r'^-(\d+)([smhd])$')
 _UNIT_KW = {'s': 'seconds', 'm': 'minutes', 'h': 'hours', 'd': 'days'}
@@ -106,6 +115,9 @@ def plan(
     key_expr: str,
     window: Window,
     filters: dict[str, Any] | None = None,
+    *,
+    after: Anchor | None = None,
+    skip_null_time: bool = False,
 ) -> tuple[str, list[Any]]:
     """Plan a parameterized SELECT for ``stream`` over ``key_expr`` + ``window``.
 
@@ -116,6 +128,12 @@ def plan(
         window: The resolved time window.
         filters: Allow-listed field equality filters (must be in
             ``stream.index``).
+        after: Resume strictly after this :data:`Anchor` — the keyset predicate
+            behind ``Store.iter``'s paging. ``None`` starts at the beginning.
+        skip_null_time: Exclude rows whose temporal axis is ``NULL`` (a nullable
+            ``time_field`` that arrived unset). Paging requires it: a ``NULL``
+            compares as unknown against any anchor, so such a row could otherwise
+            be yielded once and then silently strand the walk.
 
     Returns:
         ``(sql, params)`` ready for the backend.
@@ -136,6 +154,13 @@ def plan(
     if window.end is not None:
         where.append(f'"{time_col}" <= ?')
         params.append(window.end)
+    if skip_null_time:
+        where.append(f'"{time_col}" IS NOT NULL')
+    if after is not None:
+        # Row-value comparison (SQLite >= 3.15, DuckDB) over the full sort key.
+        comparison = '>' if window.ascending else '<'
+        where.append(f'("{time_col}", "_ts_hlc", "_key_expr") {comparison} (?, ?, ?)')
+        params.extend(after)
     if filters:
         allowed = set(stream.index)
         for name, value in filters.items():
@@ -151,10 +176,10 @@ def plan(
     direction = 'ASC' if window.ascending else 'DESC'
     sql = (
         f'SELECT * FROM "{stream.table}"{clause} '
-        f'ORDER BY "{time_col}" {direction}, "_ts_hlc" {direction} '
+        f'ORDER BY "{time_col}" {direction}, "_ts_hlc" {direction}, "_key_expr" {direction} '
         f'LIMIT {int(window.limit)}'
     )
     return sql, params
 
 
-__all__ = ['Window', 'TimeBound', 'parse_window', 'plan', 'DEFAULT_LIMIT', 'MAX_LIMIT']
+__all__ = ['Anchor', 'Window', 'TimeBound', 'parse_window', 'plan', 'DEFAULT_CHUNK', 'DEFAULT_LIMIT', 'MAX_LIMIT']

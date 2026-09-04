@@ -72,6 +72,19 @@ class DuckDBBackend:
             raise BackendError(f'ensure_table({table!r}) failed: {exc}') from exc
         self._pks[table] = tuple(primary_key)
 
+    def ensure_index(
+        self,
+        name: str,
+        table: str,
+        columns: Sequence[str],
+    ) -> None:
+        """Create the secondary index ``name`` if absent (idempotent DDL)."""
+        cols = ', '.join(f'"{col}"' for col in columns)
+        try:
+            self._conn.execute(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ({cols})')
+        except duckdb.Error as exc:
+            raise BackendError(f'ensure_index({name!r}) failed: {exc}') from exc
+
     def append_batch(
         self,
         table: str,

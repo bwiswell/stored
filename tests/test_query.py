@@ -98,3 +98,26 @@ def test_plan_time_field_stream_keys_on_event_at():
     assert '"_event_at" >= ?' in sql
     assert 'ORDER BY "_event_at"' in sql
     assert '_issued_at' not in sql
+
+
+def test_plan_orders_by_the_full_sort_key():
+    sql, _ = query.plan(_stream(), '', query.parse_window())
+    assert 'ORDER BY "_issued_at" ASC, "_ts_hlc" ASC, "_key_expr" ASC' in sql
+
+
+def test_plan_after_adds_a_keyset_predicate():
+    anchor = (datetime.datetime(2026, 1, 1), 'hlc-1', 'k')
+    sql, params = query.plan(_stream(), '', query.parse_window(), after=anchor)
+    assert '("_issued_at", "_ts_hlc", "_key_expr") > (?, ?, ?)' in sql
+    assert params[-3:] == list(anchor)
+
+
+def test_plan_after_flips_with_descending_order():
+    anchor = (datetime.datetime(2026, 1, 1), 'hlc-1', 'k')
+    sql, _ = query.plan(_stream(), '', query.parse_window(order='desc'), after=anchor)
+    assert '("_issued_at", "_ts_hlc", "_key_expr") < (?, ?, ?)' in sql
+
+
+def test_plan_skip_null_time():
+    sql, _ = query.plan(_stream(), '', query.parse_window(), skip_null_time=True)
+    assert '"_issued_at" IS NOT NULL' in sql

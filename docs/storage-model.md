@@ -115,6 +115,24 @@ migration is a manual step. Each row keeps its `_schema` tag, so mixed-schema
 history is self-describing. `stored migrate` re-runs the reconcile for every
 configured stream.
 
+## Indexes
+
+Beyond the `(_key_expr, _ts_hlc)` primary key, `register` emits two kinds of
+secondary index — and deliberately no more:
+
+- **The temporal index**, `(time_column, _ts_hlc, _key_expr)` — the exact sort key
+  every planned SELECT uses, so one index serves range queries, `Store.iter`'s
+  keyset paging, and the reaper's `DELETE … WHERE time < cutoff` alike.
+- **One per declared `index=` dimension**, single-column each rather than one
+  composite: filters are independent (a query may name `kind` without `source`,
+  which a composite's leading-column rule would not serve).
+
+`_key_expr` equality needs no index of its own — it leads the primary key, whose
+unique index already serves it. The cost is write amplification on the append
+path, which is why the set is small and every extra index is opt-in via `index=`.
+Emission is idempotent (`CREATE INDEX IF NOT EXISTS`), so an existing store gains
+them on the next `register`/`migrate`.
+
 ## TTL
 
 `stored` runs an **active** reaper (unlike zeared's lazy last-value expiry):
