@@ -87,6 +87,7 @@ class Binding:
         *,
         store_as: type[s.Seared] | None = None,
         via: Callable[[M], s.Seared] | None = None,
+        live_only: bool = False,
         on_error: Callable[[Exception, bytes], None] | None = None,
     ) -> Any:
         """Subscribe ``cls`` and record every message.
@@ -99,26 +100,52 @@ class Binding:
         A mapped row keeps the **source** message's key expression and HLC timestamp,
         so redelivery of a source message still dedups on the stored primary key.
 
+        A subscription covers **every template the class declares** — its ``TOPIC``
+        and any ``EXTRA_TOPICS``. ``live_only=True`` narrows recording to the
+        canonical scope, which is what keeps a historian from re-recording a
+        :class:`~stored.mesh.Replayer`'s output as though it were new traffic. It
+        compares the sample's key against ``TOPIC``'s literal prefix, so a replay
+        scope must differ *before* the first ``{slot}`` — which the scope-segment
+        shape gives you anyway.
+
         Args:
             cls: The contract to subscribe.
             store_as: The registered class to persist as; ``None`` records ``cls``.
             via: ``(message) -> instance`` normalizer, required with ``store_as``.
+            live_only: Record only samples arriving on ``cls.TOPIC``'s own scope,
+                ignoring the class's other declared templates.
             on_error: Optional ``on_error(exc, raw)`` for the subscriber.
 
         Returns:
             The zeared ``Subscriber`` handle (also closed by :meth:`close`).
 
         Raises:
-            ConfigError: If ``store_as`` is given without ``via``, or the target
-                class is not registered on the store.
+            ConfigError: If ``store_as`` is given without ``via``, the target class
+                is not registered, or ``live_only`` is asked of a ``TOPIC`` with no
+                literal prefix to compare against.
         """
         target = store_as or cls
         if store_as is not None and via is None:
             raise ConfigError(f'record({cls.__name__}, store_as={store_as.__name__}) needs via=<mapper>')
         self._require_registered(target, f'record({cls.__name__})')
         mapper = via
+        extras = tuple(getattr(cls, 'EXTRA_TOPICS', ()) or ())
+        live_prefix = str(cls.TOPIC).split('{', 1)[0] if live_only else ''
+        if live_only and not live_prefix:
+            raise ConfigError(
+                f'record({cls.__name__}, live_only=True): TOPIC {cls.TOPIC!r} starts with a slot, '
+                'so there is no literal scope to match on',
+            )
+        if extras and not live_only:
+            _log.warning(
+                '%s declares EXTRA_TOPICS %s and is recorded from all of them; '
+                'pass live_only=True to record only the canonical scope',
+                cls.__name__, list(extras),
+            )
 
         def _on_message(message: M, meta: ZenohMeta) -> None:
+            if live_prefix and not meta.key_expr.startswith(live_prefix):
+                return  # another declared scope (a replay, say) — not this recorder's traffic
             row = mapper(message) if mapper is not None else message
             self._store.record(target, row, meta=meta)
 
