@@ -60,10 +60,7 @@ store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
 history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → list[Telemetry]
 newest  = store.latest(Telemetry, id=7)                  # → Telemetry | None, however old
 
-for row in store.query(Telemetry, id=7, since='-1h', limit=5000):
-    ...                                                  # one list, capped
-
-for row in store.iter(Telemetry, since='-30d'):          # streamed, unbounded
+for row in store.iter(Telemetry, since='-30d'):          # streamed, uncapped
     ...                                                  # a page in memory at a time
 
 store.flush(); store.prune(); store.close()
@@ -118,6 +115,8 @@ binding.record(Alarm, store_as=Event, via=from_alarm)   # subscribe A → persis
 binding.serve_range(Event, filters=('source', 'kind'), since='from_ts', limit='limit')
 binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),
                      project=to_last_position, missing=no_position)
+
+binding.serve_range(Event, filters=('source',), stream=True)   # reply row by row
 ```
 
 Handlers are `async def` and await the store off the loop. The binding speaks only
@@ -180,7 +179,9 @@ Tests mirror the source layout. The mesh tests spin up a loopback Zenoh peer
 
 The v1 core is functional: SQLite-backed persistence (stdlib; DuckDB an optional
 backend), a batched writer, event-time keying (`time_field`), latest-per-key
-projections (`latest_key` / `store.latest`), TTL pruning, the Zenoh chronicler
-(record + serve history), and a runnable daemon. Deferred: the Postgres backend, a
-generic `HistoryQuery` contract, complex-field column promotion, and the
-cold-archival tiers.
+projections (`latest_key` / `store.latest`), secondary indexes, bounded-memory
+streaming (`store.iter`), TTL pruning, the service layer (`stored.mesh`:
+`AsyncStore` plus declarative record / range / last-known bindings, ranges
+optionally streamed), the Zenoh chronicler (record + serve history), and a runnable
+daemon. Deferred: the Postgres backend, complex-field column promotion, the
+cold-archival tiers, and replay-as-publication.
