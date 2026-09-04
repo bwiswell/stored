@@ -47,3 +47,17 @@ def test_async_store_import_stays_transport_free():
         "assert 'zenoh' not in sys.modules, 'stored.mesh pulled zenoh'"
     )
     subprocess.run([sys.executable, '-c', code], check=True)
+
+
+def test_binding_resolves_lazily_from_the_mesh_namespace():
+    # The mirror of the AsyncStore invariant: Binding *does* need the transport, and
+    # importing it is what pulls zeared in — never merely touching stored.mesh.
+    code = (
+        'import stored.mesh, sys; '
+        "assert 'zeared' not in sys.modules, 'importing stored.mesh pulled zeared'; "
+        'b = stored.mesh.Binding; '
+        'from stored.mesh.binding import Binding; '
+        'assert b is Binding; '
+        "assert 'zeared' in sys.modules, 'accessing Binding should import zeared'"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
