@@ -207,7 +207,7 @@ class Binding:
         """
         self._require_registered(cls, f'serve_range({cls.__name__})')
         request_cls = self._require_request(cls, 'serve_range')
-        columns = _as_mapping(filters)
+        columns, paths = self._split_filters(cls, filters, f'serve_range({cls.__name__})')
         cap = default_limit if default_limit is not None else (MAX_LIMIT if stream else None)
 
         def _read(request: Any) -> dict[str, Any]:
@@ -217,10 +217,16 @@ class Binding:
                 for field, column in columns.items()
                 if _present(getattr(request, field, None), unset)
             }
+            where = {
+                path: getattr(request, field)
+                for field, path in paths.items()
+                if _present(getattr(request, field, None), unset)
+            }
             return {
                 'since': self._bound(request, since, unset),
                 'until': self._bound(request, until, unset),
                 'limit': self._bound(request, limit, unset) or cap,
+                'where': where or None,
                 **applied,
             }
 
@@ -238,6 +244,115 @@ class Binding:
                 return
             async for row in self._store.iter(cls, chunk=chunk, **_read(request)):
                 yield row
+
+        handler = _stream if stream else _collect
+        handle = cls.on_query(handler, session=self._session, on_error=on_error)
+        self._handles.append(handle)
+        return handle
+
+    def serve_snapshot[R: z.Message](  # noqa: PLR0913 — one keyword per request field it reads
+        self,
+        cls: type[R],
+        *,
+        of: type[s.Seared] | None = None,
+        filters: Sequence[str] | Mapping[str, str] = (),
+        since: str | None = None,
+        until: str | None = None,
+        limit: str | None = None,
+        default_limit: int | None = None,
+        project: Callable[[Any, Any], R] | None = None,
+        stream: bool = False,
+        chunk: int = DEFAULT_CHUNK,
+        unset: tuple[Any, ...] = UNSET_FALSY,
+        on_error: Callable[[Exception, bytes], None] | None = None,
+    ) -> Any:
+        """Serve **current state**: the newest row of every matching entity.
+
+        :meth:`serve_range` answers "what happened"; this answers "what is the case".
+        It is the same declaration pointed at the latest projection — one reply per
+        *entity* rather than per observation — which is the shape an operator console
+        asks for ("everything in department 5 right now").
+
+        ``filters`` resolve the same way as in :meth:`serve_range`: a target that
+        names a declared dimension filters a column, one that names a declared
+        ``json_index`` path filters inside a ``Dict``. ``since``/``until`` narrow on
+        **last seen**, not on when a row was recorded.
+
+        Args:
+            cls: The reply contract; its ``REQUEST`` types the request.
+            of: The stored class holding the projection; defaults to ``cls``.
+            filters: Request fields that filter — names, or ``{field: target}``.
+            since: Request field naming a lower bound on last-seen, if any.
+            until: Request field naming an upper bound on last-seen, if any.
+            limit: Request field naming the row cap, if any.
+            default_limit: Cap applied when the request omits one. Streaming defaults
+                it to ``MAX_LIMIT``, as :meth:`serve_range` does and for the same
+                reason.
+            project: ``(row, request) -> reply``; required when ``of`` differs from
+                ``cls``.
+            stream: Reply row-by-row from a paged walk instead of one list.
+            chunk: Rows per page while streaming. Ignored unless ``stream``.
+            unset: Values treated as "not provided" (see :data:`UNSET_FALSY`).
+            on_error: Optional ``on_error(exc, raw)`` for the queryable.
+
+        Returns:
+            The zeared ``Queryable`` handle (also closed by :meth:`close`).
+
+        Raises:
+            ConfigError: If the stored class is unregistered, keeps no latest
+                projection, declares no ``REQUEST``, or needs a ``project`` hook.
+        """
+        stored_cls: type[s.Seared] = of or cls
+        what = f'serve_snapshot({cls.__name__})'
+        self._require_registered(stored_cls, what)
+        if not self._store.store.registry.get(stored_cls).has_latest:
+            raise ConfigError(
+                f'{what}: {stored_cls.__name__} has no latest projection (register it with latest_key=…)',
+            )
+        request_cls = self._require_request(cls, 'serve_snapshot')
+        if project is None and stored_cls is not cls:
+            raise ConfigError(
+                f'{what} with of={stored_cls.__name__} needs project=<row, request -> reply>; '
+                'only the caller knows how a stored row becomes this reply',
+            )
+        shape: Callable[[Any, Any], R] = project if project is not None else (lambda row, _request: row)
+        columns, paths = self._split_filters(stored_cls, filters, what)
+        cap = default_limit if default_limit is not None else (MAX_LIMIT if stream else None)
+
+        def _read(request: Any) -> dict[str, Any]:
+            applied = {
+                column: getattr(request, field)
+                for field, column in columns.items()
+                if _present(getattr(request, field, None), unset)
+            }
+            where = {
+                path: getattr(request, field)
+                for field, path in paths.items()
+                if _present(getattr(request, field, None), unset)
+            }
+            return {
+                'since': self._bound(request, since, unset),
+                'until': self._bound(request, until, unset),
+                'limit': self._bound(request, limit, unset) or cap,
+                'where': where or None,
+                **applied,
+            }
+
+        async def _collect(ctx: QueryContext) -> list[R]:
+            request = ctx.request
+            if not isinstance(request, request_cls):
+                _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
+                return []
+            rows = await self._store.query_latest(stored_cls, **_read(request))
+            return [shape(row, request) for row in rows]
+
+        async def _stream(ctx: QueryContext) -> AsyncIterator[R]:
+            request = ctx.request
+            if not isinstance(request, request_cls):
+                _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
+                return
+            async for row in self._store.iter_latest(stored_cls, chunk=chunk, **_read(request)):
+                yield shape(row, request)
 
         handler = _stream if stream else _collect
         handle = cls.on_query(handler, session=self._session, on_error=on_error)
@@ -331,6 +446,47 @@ class Binding:
         self._handles.clear()
 
     # -- helpers -----------------------------------------------------------
+
+    def _split_filters(
+        self,
+        stored_cls: type[s.Seared],
+        filters: Sequence[str] | Mapping[str, str],
+        what: str,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Sort each declared filter into a column filter or a path filter.
+
+        The stream already says which is which — ``index`` names columns,
+        ``json_paths`` names paths — so the binding resolves against the declaration
+        rather than guessing from the spelling, and a target in neither is a
+        **bind-time** error rather than a query that never matches.
+
+        Args:
+            stored_cls: The class whose stream declares the dimensions and paths.
+            filters: Request fields that filter — names, or ``{field: target}``.
+            what: The caller, for the error message.
+
+        Returns:
+            ``({request field: column}, {request field: path})``.
+
+        Raises:
+            ConfigError: If a target names neither a declared dimension nor a
+                declared path.
+        """
+        stream = self._store.store.registry.get(stored_cls)
+        columns: dict[str, str] = {}
+        paths: dict[str, str] = {}
+        for field, target in _as_mapping(filters).items():
+            if target in stream.json_paths:
+                paths[field] = target
+            elif target in stream.index:
+                columns[field] = target
+            else:
+                raise ConfigError(
+                    f'{what}: {target!r} is neither an indexed dimension {sorted(stream.index)} '
+                    f'nor a declared json_index path {sorted(stream.json_paths)} of '
+                    f'{stored_cls.__name__}',
+                )
+        return columns, paths
 
     def _require_registered(self, cls: type[s.Seared], what: str) -> None:
         """Fail at bind time, not on the first message, when a class is unregistered."""
