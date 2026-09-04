@@ -17,7 +17,7 @@ strict one, or any tuple of values a given fleet treats as absent.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import seared as s
@@ -25,6 +25,7 @@ import zeared as z
 
 from ..errors import ConfigError
 from ..log import get_logger
+from ..query import DEFAULT_CHUNK, MAX_LIMIT
 from ..store import Store
 from .async_store import AsyncStore
 
@@ -127,7 +128,7 @@ class Binding:
 
     # -- serve -------------------------------------------------------------
 
-    def serve_range[M: z.Message](
+    def serve_range[M: z.Message](  # noqa: PLR0913 — one keyword per request field it reads
         self,
         cls: type[M],
         *,
@@ -136,6 +137,8 @@ class Binding:
         until: str | None = None,
         limit: str | None = None,
         default_limit: int | None = None,
+        stream: bool = False,
+        chunk: int = DEFAULT_CHUNK,
         unset: tuple[Any, ...] = UNSET_FALSY,
         on_error: Callable[[Exception, bytes], None] | None = None,
     ) -> Any:
@@ -146,13 +149,26 @@ class Binding:
         Any field holding an :data:`unset` sentinel is simply not applied, so one
         request type serves "everything", "one tag", and "one tag in an hour" alike.
 
+        With ``stream=True`` the handler is a generator: rows are replied **as they
+        are read**, a page at a time, so neither the historian nor the caller holds
+        the result set (a getter using ``z.aquery_iter`` sees each reply as it lands).
+        The window is then bounded by ``default_limit``, which defaults to the query
+        planner's ``MAX_LIMIT`` rather than to "unbounded" — a caller that abandons a
+        query does **not** stop the queryable, so an uncapped stream would leave the
+        historian producing rows nobody is reading.
+
         Args:
             cls: The registered class to serve. Its ``REQUEST`` types the request.
             filters: Request fields that filter — names, or ``{field: column}``.
             since: Request field naming the lower time bound, if any.
             until: Request field naming the upper time bound, if any.
             limit: Request field naming the row cap, if any.
-            default_limit: Cap applied when the request omits one.
+            default_limit: Cap applied when the request omits one. Streaming defaults
+                it to ``MAX_LIMIT``; pass an explicit value to raise or lower it.
+            stream: Reply row-by-row from a paged walk instead of one materialized
+                list. No contract change — the same replies, produced lazily.
+            chunk: Rows per page while streaming (the memory bound and thread-hop
+                size). Ignored unless ``stream``.
             unset: Values treated as "not provided" (see :data:`UNSET_FALSY`).
             on_error: Optional ``on_error(exc, raw)`` for the queryable.
 
@@ -165,26 +181,39 @@ class Binding:
         self._require_registered(cls, f'serve_range({cls.__name__})')
         request_cls = self._require_request(cls, 'serve_range')
         columns = _as_mapping(filters)
+        cap = default_limit if default_limit is not None else (MAX_LIMIT if stream else None)
 
-        async def _handler(ctx: QueryContext) -> list[M]:
-            request = ctx.request
-            if not isinstance(request, request_cls):
-                _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
-                return []
+        def _read(request: Any) -> dict[str, Any]:
+            """The request, read as store keywords — identical for both reply shapes."""
             applied = {
                 column: getattr(request, field)
                 for field, column in columns.items()
                 if _present(getattr(request, field, None), unset)
             }
-            return await self._store.query(
-                cls,
-                since=self._bound(request, since, unset),
-                until=self._bound(request, until, unset),
-                limit=self._bound(request, limit, unset) or default_limit,
+            return {
+                'since': self._bound(request, since, unset),
+                'until': self._bound(request, until, unset),
+                'limit': self._bound(request, limit, unset) or cap,
                 **applied,
-            )
+            }
 
-        handle = cls.on_query(_handler, session=self._session, on_error=on_error)
+        async def _collect(ctx: QueryContext) -> list[M]:
+            request = ctx.request
+            if not isinstance(request, request_cls):
+                _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
+                return []
+            return await self._store.query(cls, **_read(request))
+
+        async def _stream(ctx: QueryContext) -> AsyncIterator[M]:
+            request = ctx.request
+            if not isinstance(request, request_cls):
+                _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
+                return
+            async for row in self._store.iter(cls, chunk=chunk, **_read(request)):
+                yield row
+
+        handler = _stream if stream else _collect
+        handle = cls.on_query(handler, session=self._session, on_error=on_error)
         self._handles.append(handle)
         return handle
 

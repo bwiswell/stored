@@ -88,6 +88,22 @@ def no_position(request: LastPositionRequest) -> LastPosition:
 
 # -- helpers -----------------------------------------------------------------
 
+class _CountingBackend:
+    """Delegates to a real backend, counting ``select`` calls (page-count proof)."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.selects = 0
+
+    def select(self, sql, params=()):
+        self.selects += 1
+        return self.inner.select(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+
 async def _settle(seconds: float = 0.25):
     await asyncio.sleep(seconds)
 
@@ -309,4 +325,99 @@ async def test_close_releases_every_handle(session):
         await _settle()
         assert await store.query(Position) == []  # the subscriber is gone
     finally:
+        await store.close()
+
+
+# -- streamed replies --------------------------------------------------------
+
+async def test_streamed_range_matches_the_collected_one(session):
+    """Same replies, produced lazily — streaming is not a contract change."""
+    zeared.session = session
+    store, binding = _store(), None
+    try:
+        for i in range(12):
+            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+        await store.flush()
+
+        binding = Binding(store, session=session)
+        binding.serve_range(
+            Event, filters=('source',), since='from_ts', limit='limit', stream=True, chunk=4,
+        )
+        await _settle()
+
+        collected = await zeared.aquery(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        assert [r.raised_at for r in collected] == [1000.0 + i for i in range(12)]
+
+        windowed = await zeared.aquery(Event, request=HistoryRequest(from_ts=1008.0), timeout=5.0)
+        assert [r.raised_at for r in windowed] == [1008.0, 1009.0, 1010.0, 1011.0]
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_streamed_range_reaches_a_streaming_getter(session):
+    """The end-to-end shape: a generator handler feeding ``aquery_iter``."""
+    zeared.session = session
+    store, binding = _store(), None
+    try:
+        for i in range(9):
+            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+        await store.flush()
+
+        binding = Binding(store, session=session)
+        binding.serve_range(Event, filters=('source',), stream=True, chunk=3)
+        await _settle()
+
+        seen = [row.raised_at async for row in zeared.aquery_iter(Event, request=HistoryRequest(), timeout=5.0)]
+        assert sorted(seen) == [1000.0 + i for i in range(9)]
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_streamed_range_reads_page_by_page(session):
+    """The point of streaming: the historian never materializes the window."""
+    zeared.session = session
+    store, binding = _store(), None
+    try:
+        for i in range(20):
+            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+        await store.flush()
+
+        counting = _CountingBackend(store.store._backend)
+        store.store._backend = counting
+        binding = Binding(store, session=session)
+        binding.serve_range(Event, filters=('source',), stream=True, chunk=5)
+        await _settle()
+
+        rows = await zeared.aquery(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        assert len(rows) == 20
+        assert counting.selects >= 4, 'a streamed range should read in pages, not one select'
+    finally:
+        store.store._backend = counting.inner
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_streamed_range_is_capped_by_default(session):
+    """An abandoned getter does not stop the queryable, so the stream carries its own bound."""
+    zeared.session = session
+    store, binding = _store(), None
+    try:
+        for i in range(10):
+            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+        await store.flush()
+
+        binding = Binding(store, session=session)
+        binding.serve_range(Event, filters=('source',), stream=True, chunk=2, default_limit=3)
+        await _settle()
+
+        rows = await zeared.aquery(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        assert len(rows) == 3
+    finally:
+        if binding:
+            binding.close()
         await store.close()

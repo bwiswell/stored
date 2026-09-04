@@ -76,6 +76,34 @@ dimensions, `since`/`until` the window, `limit` the cap. `cls` is both the store
 class and the reply class — a stream is queried by, and answers with, the class it
 is stored as.
 
+### Streaming a range
+
+```python
+binding.serve_range(Event, filters=('source',), since='from_ts', limit='limit',
+                    stream=True, chunk=500)
+```
+
+With `stream=True` the handler is a generator: rows are replied **as they are
+read**, a page at a time, so neither side holds the result set. A getter using
+`z.aquery_iter(...)` sees each reply as it lands; one using `z.aquery(...)` still
+collects the list, and gets identical replies. It is not a contract change — the
+same rows, produced lazily — so an existing queryable can switch over without its
+consumers noticing.
+
+Two properties of Zenoh queries shape the defaults:
+
+- **A caller that abandons a query does not stop the queryable.** Cancellation is
+  client-side only, so an uncapped stream would leave the historian producing rows
+  nobody reads. Streaming therefore defaults `default_limit` to the query planner's
+  `MAX_LIMIT` rather than to "unbounded"; pass an explicit value to raise or lower
+  the bound.
+- **`timeout` covers the whole query**, and starts when the getter is *called*. A
+  streamed range is right for windows that are large but bounded; a window measured
+  in days belongs on a replay, not a query.
+
+`stream` is opt-in. Collecting is the better default for the small bounded reads
+most queryables serve, and switching an existing binding is a one-word change.
+
 ### `serve_latest(cls, of=…, project=…, missing=…)`
 
 `cls` is the **reply** contract; `of` is the class actually stored. When they

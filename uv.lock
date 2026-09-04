@@ -234,7 +234,7 @@ source = { git = "https://github.com/bwiswell/seared#0b63b84f7c350853da011370986
 
 [[package]]
 name = "stored"
-version = "0.2.8"
+version = "0.2.9"
 source = { editable = "." }
 dependencies = [
     { name = "seared" },
@@ -326,8 +326,8 @@ wheels = [
 
 [[package]]
 name = "zeared"
-version = "0.2.7"
-source = { git = "https://github.com/bwiswell/zeared#32d6da089d90b3ab2773b704b8e87ea7fa0c8ec5" }
+version = "0.3.5"
+source = { git = "https://github.com/bwiswell/zeared#a800a8f747036ff1694150e23648f88784640351" }
 dependencies = [
     { name = "eclipse-zenoh" },
     { name = "msgpack" },
