@@ -66,6 +66,9 @@ for row in store.iter(Telemetry, since='-30d'):          # streamed, uncapped
 
 current = store.query_latest(Telemetry, since='-1h')     # every entity's newest, filtered
 
+# filter on a key *inside* a dict field, declared with json_index=(…)
+here = store.query_latest(Location, where={'zones.department': 5})
+
 store.flush(); store.prune(); store.close()
 ```
 
@@ -75,6 +78,12 @@ always see prior writes. Reads are **typed on the class you ask for** —
 `Telemetry | None` to a type checker, with no cast at the call site. Retention
 horizons accept the duration grammar (`'7d'`), a number of seconds, or a
 `datetime.timedelta`.
+
+Some fields have **open-ended keys by design** — a location's `zones` is
+`{layer: zone_id}`, and the layer names belong to the deployment, so they can never
+be columns. Declare a path with `json_index=('zones.department',)` and it becomes
+filterable through `where=` on every read; `stored` translates the path into the
+payload's own spelling, so a field aliased with `data_key=` still matches.
 
 `query`/`iter` read the **history** table; `query_latest`/`iter_latest` read the
 **latest projection** — one row per entity instead of one per observation, for the

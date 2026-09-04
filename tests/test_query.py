@@ -17,6 +17,7 @@ class Msg(s.Seared):
 class Obs(s.Seared):
     id:          int   = s.Int(required=True)
     observed_at: float = s.Float(required=True)
+    zones:       dict  = s.Dict(default_factory=dict)
 
 
 def _stream():
@@ -155,3 +156,39 @@ def test_plan_spells_key_matching_through_the_dialect():
 def test_plan_defaults_to_the_sqlite_spelling():
     sql, _ = query.plan(_stream(), 'rio/*', query.parse_window())
     assert '"_key_expr" GLOB ?' in sql
+
+
+def _zoned_stream():
+    return StreamRegistry().add(Obs, index=('id',), json_index=('zones.department',))
+
+
+def test_plan_renders_a_path_filter_through_the_dialect():
+    sql, params = query.plan(
+        _zoned_stream(), '', query.parse_window(), where={'zones.department': 5},
+    )
+    assert 'json_extract("_payload", \'$.zones.department\') = ?' in sql
+    assert params[-1] == 5
+
+
+def test_plan_path_filter_picks_the_text_extractor_for_a_string():
+    from stored.dialect import DuckDBDialect
+
+    sql, _ = query.plan(
+        _zoned_stream(), '', query.parse_window(),
+        where={'zones.department': 'front'}, dialect=DuckDBDialect(),
+    )
+    assert 'json_extract_string("_payload", \'$.zones.department\')' in sql
+
+
+def test_plan_rejects_an_undeclared_path():
+    with pytest.raises(QueryError, match='not a declared json_index'):
+        query.plan(_zoned_stream(), '', query.parse_window(), where={'zones.aisle': 1})
+
+
+def test_plan_combines_path_filters_with_column_filters():
+    sql, params = query.plan(
+        _zoned_stream(), '', query.parse_window(), {'id': 7}, where={'zones.department': 5},
+    )
+    assert '"id" = ?' in sql
+    assert 'json_extract' in sql
+    assert params == [7, 5]

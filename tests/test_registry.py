@@ -13,6 +13,13 @@ class Msg(s.Seared):
 
 
 @s.seared
+class Zoned(s.Seared):
+    id:    int  = s.Int(required=True)
+    zones: dict = s.Dict(data_key='zn', default_factory=dict)
+    label: str  = s.Str(default='')
+
+
+@s.seared
 class Obs(s.Seared):
     id:          int   = s.Int(required=True)
     observed_at: float = s.Float(required=True)
@@ -99,3 +106,28 @@ def test_latest_key_sets_projection():
 def test_latest_key_unknown_field_raises():
     with pytest.raises(RegistrationError):
         StreamRegistry().add(Obs, latest_key=('nope',))
+
+
+def test_json_index_records_the_translated_paths():
+    stream = StreamRegistry().add(Zoned, json_index=('zones.department',))
+    assert stream.json_paths == {'zones.department': 'zn.department'}
+
+
+def test_json_index_defaults_to_nothing():
+    assert StreamRegistry().add(Zoned).json_paths == {}
+
+
+def test_json_index_rejects_an_unknown_head():
+    with pytest.raises(RegistrationError, match='not a field'):
+        StreamRegistry().add(Zoned, json_index=('nope.key',))
+
+
+def test_json_index_rejects_a_non_dict_head():
+    """A path reaches into a Dict; a scalar already has a column."""
+    with pytest.raises(RegistrationError, match='is a Str field'):
+        StreamRegistry().add(Zoned, json_index=('label.key',))
+
+
+def test_json_index_rejects_the_bare_dict():
+    with pytest.raises(RegistrationError, match='names the whole'):
+        StreamRegistry().add(Zoned, json_index=('zones',))

@@ -117,6 +117,7 @@ def plan(
     window: Window,
     filters: dict[str, Any] | None = None,
     *,
+    where: dict[str, Any] | None = None,
     after: Anchor | None = None,
     skip_null_time: bool = False,
     table: str | None = None,
@@ -131,6 +132,9 @@ def plan(
         window: The resolved time window.
         filters: Allow-listed field equality filters (must be in
             ``stream.index``).
+        where: Allow-listed **path** equality filters (must be in
+            ``stream.json_paths``) — equality on a key inside a ``Dict`` field,
+            read out of ``_payload``.
         after: Resume strictly after this :data:`Anchor` — the keyset predicate
             behind ``Store.iter``'s paging. ``None`` starts at the beginning.
         skip_null_time: Exclude rows whose temporal axis is ``NULL`` (a nullable
@@ -148,27 +152,28 @@ def plan(
         ``(sql, params)`` ready for the backend.
 
     Raises:
-        QueryError: If a filter names a non-indexed field.
+        QueryError: If a filter names a non-indexed field, or a ``where`` key names
+            an undeclared path.
     """
-    where: list[str] = []
+    clauses: list[str] = []
     params: list[Any] = []
     time_col = stream.time_column
 
     if key_expr:
-        where.append(dialect.key_match('_key_expr', wildcard='*' in key_expr))
+        clauses.append(dialect.key_match('_key_expr', wildcard='*' in key_expr))
         params.append(key_expr)
     if window.start is not None:
-        where.append(f'"{time_col}" >= ?')
+        clauses.append(f'"{time_col}" >= ?')
         params.append(window.start)
     if window.end is not None:
-        where.append(f'"{time_col}" <= ?')
+        clauses.append(f'"{time_col}" <= ?')
         params.append(window.end)
     if skip_null_time:
-        where.append(f'"{time_col}" IS NOT NULL')
+        clauses.append(f'"{time_col}" IS NOT NULL')
     if after is not None:
         # Row-value comparison (SQLite >= 3.15, DuckDB) over the full sort key.
         comparison = '>' if window.ascending else '<'
-        where.append(f'("{time_col}", "_ts_hlc", "_key_expr") {comparison} (?, ?, ?)')
+        clauses.append(f'("{time_col}", "_ts_hlc", "_key_expr") {comparison} (?, ?, ?)')
         params.extend(after)
     if filters:
         allowed = set(stream.index)
@@ -178,10 +183,23 @@ def plan(
                     f'filter {name!r} is not an indexed dimension of '
                     f'{stream.cls.__name__} (indexed: {sorted(allowed)})',
                 )
-            where.append(f'"{name}" = ?')
+            clauses.append(f'"{name}" = ?')
             params.append(value)
 
-    clause = f' WHERE {" AND ".join(where)}' if where else ''
+    if where:
+        for path, value in where.items():
+            wire = stream.json_paths.get(path)
+            if wire is None:
+                raise QueryError(
+                    f'path {path!r} is not a declared json_index of '
+                    f'{stream.cls.__name__} (declared: {sorted(stream.json_paths)})',
+                )
+            # The extractor depends on the value's type: DuckDB's json_extract
+            # returns JSON, which will not compare against a bound string.
+            clauses.append(f'{dialect.json_value("_payload", wire, text=isinstance(value, str))} = ?')
+            params.append(value)
+
+    clause = f' WHERE {" AND ".join(clauses)}' if clauses else ''
     direction = 'ASC' if window.ascending else 'DESC'
     sql = (
         f'SELECT * FROM "{table or stream.table}"{clause} '

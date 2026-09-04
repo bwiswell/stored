@@ -26,6 +26,13 @@ class Nullable(s.Seared):
     observed_at: float | None  = s.Float(default=None)
 
 
+@s.seared
+class Zoned(s.Seared):
+    id:          int   = s.Int(required=True)
+    zones:       dict  = s.Dict(data_key='zn', default_factory=dict)  # aliased on the wire
+    observed_at: float = s.Float(required=True)
+
+
 class FixedMeta:
     """Meta with a fixed (key_expr, timestamp) — drives dedup on the PK."""
 
@@ -462,5 +469,94 @@ def test_projection_is_indexed_for_the_queries_that_read_it(tmp_path):
         assert 'idx_latest_obs_time' in names
         assert 'idx_latest_obs_label' in names
         assert 'idx_latest_obs_id' not in names  # `id` leads the latest key's own index
+    finally:
+        store.close()
+
+
+# -- path filters (into a Dict field) ----------------------------------------
+
+def _zoned(tmp_path):
+    """Four entities across three zones, recorded twice each."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store.register(
+        Zoned, index=('id',), time_field='observed_at',
+        latest_key=('id',), json_index=('zones.department',),
+    )
+    for i, dept in enumerate([5, 6, 5, 7]):
+        store.record(Zoned, Zoned(id=i, zones={'department': dept}, observed_at=1000.0 + i))
+        store.record(Zoned, Zoned(id=i, zones={'department': dept}, observed_at=2000.0 + i))
+    store.flush()
+    return store
+
+
+def test_path_filter_narrows_history(tmp_path):
+    store = _zoned(tmp_path)
+    try:
+        rows = store.query(Zoned, where={'zones.department': 5})
+        assert sorted({r.id for r in rows}) == [0, 2]
+        assert len(rows) == 4  # both observations of each
+    finally:
+        store.close()
+
+
+def test_path_filter_narrows_current_state(tmp_path):
+    """The console's question: who is in department 5 *now*."""
+    store = _zoned(tmp_path)
+    try:
+        rows = store.query_latest(Zoned, where={'zones.department': 5})
+        assert [r.id for r in rows] == [0, 2]  # one row per entity
+    finally:
+        store.close()
+
+
+def test_path_filter_survives_a_wire_alias(tmp_path):
+    """The payload says `zn`; the caller says `zones`. Getting this wrong matches nothing."""
+    store = _zoned(tmp_path)
+    try:
+        assert store.registry.get(Zoned).json_paths == {'zones.department': 'zn.department'}
+        assert store.query(Zoned, where={'zones.department': 7})
+    finally:
+        store.close()
+
+
+def test_path_filter_works_while_paging(tmp_path):
+    store = _zoned(tmp_path)
+    try:
+        walked = [r.id for r in store.iter(Zoned, where={'zones.department': 5}, chunk=1)]
+        assert walked == [0, 2, 0, 2]  # two entities, two observations each, time-ordered
+        current = [r.id for r in store.iter_latest(Zoned, where={'zones.department': 5}, chunk=1)]
+        assert current == [0, 2]
+    finally:
+        store.close()
+
+
+def test_path_filter_composes_with_column_filters_and_windows(tmp_path):
+    store = _zoned(tmp_path)
+    try:
+        assert [r.id for r in store.query(Zoned, id=2, where={'zones.department': 5}, since=1500.0)] == [2]
+        assert store.query(Zoned, id=1, where={'zones.department': 5}) == []
+    finally:
+        store.close()
+
+
+def test_path_filter_rejects_an_undeclared_path(tmp_path):
+    store = _zoned(tmp_path)
+    try:
+        with pytest.raises(QueryError, match='not a declared json_index'):
+            store.query(Zoned, where={'zones.aisle': 1})
+    finally:
+        store.close()
+
+
+def test_missing_key_simply_does_not_match(tmp_path):
+    """A row whose dict lacks the key is absent from the result, not an error."""
+    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    try:
+        store.register(Zoned, index=('id',), time_field='observed_at', json_index=('zones.department',))
+        store.record(Zoned, Zoned(id=1, zones={'aisle': 3}, observed_at=1000.0))  # no department
+        store.record(Zoned, Zoned(id=2, zones={'department': 5}, observed_at=1001.0))
+        store.flush()
+
+        assert [r.id for r in store.query(Zoned, where={'zones.department': 5})] == [2]
     finally:
         store.close()

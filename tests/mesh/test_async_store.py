@@ -13,6 +13,13 @@ class Msg(s.Seared):
     name: str = s.Str(default='')
 
 
+@s.seared
+class Zoned(s.Seared):
+    id:          int   = s.Int(required=True)
+    zones:       dict  = s.Dict(data_key='zn', default_factory=dict)
+    observed_at: float = s.Float(required=True)
+
+
 def _astore(tmp_path, **kwargs):
     return AsyncStore(stored.Store(str(tmp_path / 'a.db'), flush_secs=0, **kwargs))
 
@@ -149,5 +156,23 @@ async def test_current_state_reads_await_off_the_loop(tmp_path):
         streamed = [r.id async for r in store.iter_latest(Msg, chunk=5)]
         assert streamed == list(range(12))
         assert [r.id async for r in store.iter_latest(Msg, id=7)] == [7]
+    finally:
+        await store.close()
+
+
+async def test_path_filters_reach_the_async_reads(tmp_path):
+    """The console asks from a service, so `where=` has to survive the facade."""
+    store = _astore(tmp_path)
+    try:
+        store.register(Zoned, index=('id',), time_field='observed_at',
+                       latest_key=('id',), json_index=('zones.department',))
+        for i, dept in enumerate([5, 6, 5]):
+            store.record(Zoned, Zoned(id=i, zones={'department': dept}, observed_at=1000.0 + i))
+        await store.flush()
+
+        assert [r.id for r in await store.query(Zoned, where={'zones.department': 5})] == [0, 2]
+        assert [r.id for r in await store.query_latest(Zoned, where={'zones.department': 5})] == [0, 2]
+        assert [r.id async for r in store.iter(Zoned, where={'zones.department': 5}, chunk=1)] == [0, 2]
+        assert [r.id async for r in store.iter_latest(Zoned, where={'zones.department': 5})] == [0, 2]
     finally:
         await store.close()

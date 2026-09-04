@@ -92,12 +92,13 @@ class AsyncStore:
         until: TimeBound = None,
         limit: int | None = None,
         order: str = 'asc',
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> list[M]:
         """Await :meth:`stored.Store.query` on a worker thread. Returns ``cls`` instances."""
         return await asyncio.to_thread(
             lambda: self._store.query(
-                cls, key=key, since=since, until=until, limit=limit, order=order, **filters,
+                cls, key=key, since=since, until=until, limit=limit, order=order, where=where, **filters,
             ),
         )
 
@@ -114,12 +115,13 @@ class AsyncStore:
         until: TimeBound = None,
         limit: int | None = None,
         order: str = 'asc',
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> list[M]:
         """Await :meth:`stored.Store.query_latest` — current state for every matching entity."""
         return await asyncio.to_thread(
             lambda: self._store.query_latest(
-                cls, key=key, since=since, until=until, limit=limit, order=order, **filters,
+                cls, key=key, since=since, until=until, limit=limit, order=order, where=where, **filters,
             ),
         )
 
@@ -133,6 +135,7 @@ class AsyncStore:
         limit: int | None = None,
         order: str = 'asc',
         chunk: int = DEFAULT_CHUNK,
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> AsyncIterator[M]:
         """Stream current state without blocking the loop — :meth:`iter`'s projection sibling.
@@ -142,7 +145,8 @@ class AsyncStore:
         """
         walk = await asyncio.to_thread(
             lambda: self._store.iter_latest(
-                cls, key=key, since=since, until=until, limit=limit, order=order, chunk=chunk, **filters,
+                cls, key=key, since=since, until=until, limit=limit, order=order, chunk=chunk,
+                where=where, **filters,
             ),
         )
         try:
@@ -165,6 +169,7 @@ class AsyncStore:
         limit: int | None = None,
         order: str = 'asc',
         chunk: int = DEFAULT_CHUNK,
+        where: dict[str, Any] | None = None,
         **filters: Any,
     ) -> AsyncIterator[M]:
         """Stream stored history without blocking the event loop.
@@ -187,6 +192,7 @@ class AsyncStore:
             limit: Maximum rows in total, or ``None`` for the whole window.
             order: ``'asc'`` or ``'desc'`` by time.
             chunk: Rows per page — the memory bound *and* the thread-hop size.
+            where: Equality filters on declared ``json_index`` paths.
             **filters: Equality filters on indexed field dimensions.
 
         Yields:
@@ -194,7 +200,8 @@ class AsyncStore:
         """
         walk = await asyncio.to_thread(
             lambda: self._store.iter(
-                cls, key=key, since=since, until=until, limit=limit, order=order, chunk=chunk, **filters,
+                cls, key=key, since=since, until=until, limit=limit, order=order, chunk=chunk,
+                where=where, **filters,
             ),
         )
         try:

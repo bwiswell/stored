@@ -17,6 +17,8 @@ from typing import Any
 
 import seared as s
 
+from .errors import SchemaError
+
 # Backend-neutral column type names (DuckDB spelling; the backend may remap).
 # Scalar seared field class name -> column type.
 SCALAR_TYPES: dict[str, str] = {
@@ -55,6 +57,32 @@ META_COLUMNS: dict[str, str] = {
 }
 
 PRIMARY_KEY: tuple[str, str] = ('_key_expr', '_ts_hlc')
+
+
+
+def wire_path(cls: type[s.Seared], path: str) -> str:
+    """Translate a declared dotted ``path`` into the one ``_payload`` actually uses.
+
+    A ``seared`` field may carry ``data_key='z'``, in which case the payload holds
+    ``{"z": …}`` while the caller quite reasonably writes ``zones.department``. The
+    head segment is therefore looked up through ``__seared_fields__`` and rewritten;
+    everything after it is dict keys, which no aliasing touches.
+
+    Args:
+        cls: The registered message class.
+        path: A dotted path whose head names a field of ``cls``.
+
+    Returns:
+        The same path with its head in wire spelling.
+
+    Raises:
+        SchemaError: If the head does not name a field of ``cls``.
+    """
+    head, _, tail = path.partition('.')
+    for attr, wire, _field in cls.__seared_fields__:
+        if attr == head:
+            return f'{wire}.{tail}' if tail else wire
+    raise SchemaError(f'{path!r}: {head!r} is not a field of {cls.__name__}')
 
 
 def index_specs(
@@ -172,4 +200,5 @@ __all__ = [
     'derive_columns',
     'table_name',
     'latest_table_name',
+    'wire_path',
 ]
