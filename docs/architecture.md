@@ -6,6 +6,7 @@
 stored.mesh   (the contract-shaped surface; AsyncStore needs no transport)
    AsyncStore: await query/latest/iter · sync register/record
    Binding:    record(store_as/via) · serve_range(REQUEST) · serve_latest(project)
+   Replayer:   recorded history → the mesh, on a declared replay scope
 ──────────────────────────────────────────────────────────────────
 stored.zenoh  (zeared — a core dependency; Chronicler also re-exported lazily as stored.Chronicler)
    Chronicler: on_message → record      |  on_query → serve history

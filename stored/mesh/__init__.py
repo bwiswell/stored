@@ -2,9 +2,10 @@
 
 Two namespaces, one dependency. :mod:`stored.zenoh` is named for the *transport*:
 a session, the ``Chronicler``, the daemon, the selector-param query handler.
-``stored.mesh`` is the layer *over* it — the shapes a service actually binds:
-an async view of a blocking :class:`~stored.store.Store`, and (as they land) a
-typed-request query binding, a ``latest`` queryable, and a replayer.
+``stored.mesh`` is the layer *over* it — the shapes a service actually binds: an
+async view of a blocking :class:`~stored.store.Store`, a typed-request query
+binding with a ``latest`` queryable, and a replayer that publishes recorded
+history back onto the mesh.
 
 :class:`AsyncStore` needs **no transport at all** — it is asyncio over the core —
 so it is imported eagerly here and stays importable without ``zeared``. Names that
@@ -20,8 +21,9 @@ from .async_store import AsyncStore
 
 if TYPE_CHECKING:
     from .binding import UNSET_FALSY, Binding
+    from .replay import Replayer, ReplayHandle
 
-__all__ = ['UNSET_FALSY', 'AsyncStore', 'Binding']
+__all__ = ['UNSET_FALSY', 'AsyncStore', 'Binding', 'ReplayHandle', 'Replayer']
 
 
 def __getattr__(name: str) -> object:
@@ -35,4 +37,8 @@ def __getattr__(name: str) -> object:
         from . import binding
 
         return getattr(binding, name)
+    if name in ('Replayer', 'ReplayHandle'):
+        from . import replay
+
+        return getattr(replay, name)
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

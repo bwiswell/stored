@@ -113,6 +113,68 @@ contract. When one class does double duty as row *and* reply, omit `of` and
 `project`: the projection is the identity. `missing(request)` answers when nothing
 is stored for the key; omit it to reply nothing at all.
 
+## `Replayer` — history as ordinary traffic
+
+A queryable answers one asker. A **replay** re-publishes what was recorded, so any
+number of ordinary subscribers see it through their ordinary `on_message` path:
+re-run yesterday through a pipeline stage, warm a cache after a restart, drive a
+lab run from real recorded traffic — with no client code at all.
+
+```python
+from stored.mesh import Replayer
+
+replayer = Replayer(store)
+await replayer.replay(Reading, since='-1d', speed=0)        # backfill, flat out
+handle = replayer.start(Reading, since='-1h', speed=1.0)    # real time, in the background
+...
+handle.stop();  sent = await handle.wait()
+```
+
+### Where a replay lands
+
+zeared publishes on **declared** templates only, so a replayable class declares its
+replay scope:
+
+```python
+class Reading(zeared.Message):
+    TOPIC = 'live/reading/{source}'
+    EXTRA_TOPICS = ('replay/reading/{source}',)
+```
+
+`replay()` defaults to that sole `EXTRA_TOPICS` entry; pass `topic=` to choose among
+several, or `topic=cls.TOPIC` to republish onto the live topic (rarely what you
+want — recorders then cannot tell replay from live). A class with no declared scope
+and no explicit `topic=` is a `ConfigError` rather than a silent republish.
+
+That one declaration carries the whole isolation story, because provenance has
+nowhere else to ride: `ZenohMeta.origin` is derived from the local delivery path and
+never crosses the wire, so a replayed sample is otherwise indistinguishable from a
+live one.
+
+### Who sees a replay
+
+A subscription covers every template a class declares, so:
+
+- **Consumers that want history get it for free** — no client change, which is the
+  point of replaying rather than serving a query.
+- **Recorders opt out** with `binding.record(cls, live_only=True)`, which records
+  only samples arriving on `TOPIC`'s own literal scope. Without it a historian
+  re-records the replay as new traffic; `record()` logs a warning at bind time when
+  a class declares `EXTRA_TOPICS` and no choice was made.
+
+### Pacing and bounds
+
+- `speed=0` publishes as fast as the mesh accepts, a page per thread hop — the
+  backfill case.
+- `speed>0` paces to wall clock off the stream's event time (`1.0` real time, `10.0`
+  ten times faster). It needs a `time_field` on the stream; asking for pacing without
+  one is a `ConfigError` rather than a silently unpaced replay.
+- `max_rate` caps rows per second whatever `speed` says, and `limit` caps the window.
+- `stop()` interrupts a paced sleep immediately rather than after the current gap.
+
+A replay always publishes with `retain=False`, so replaying a `RETAINED` class can
+never clobber the live retained value with a historical one.
+
 ## The sentinel policy
 
 Request payloads commonly encode "not provided" as an empty string or a zero

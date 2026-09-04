@@ -119,6 +119,20 @@ binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),
 binding.serve_range(Event, filters=('source',), stream=True)   # reply row by row
 ```
 
+Recorded history can also go back **onto** the mesh, where ordinary subscribers
+see it with no client change at all:
+
+```python
+from stored.mesh import Replayer
+
+await Replayer(store).replay(Reading, since='-1d')       # backfill a pipeline stage
+handle = Replayer(store).start(Reading, speed=1.0)       # …or re-run it in real time
+```
+
+A replay publishes on a scope the class declares (`EXTRA_TOPICS`), which is what
+lets a historian keep recording live traffic while ignoring the replay
+(`record(..., live_only=True)`).
+
 Handlers are `async def` and await the store off the loop. The binding speaks only
 `zeared` vocabulary — a message class, its `REQUEST` payload, a queryable, a
 projection — so it serves any `@zeared` contract without knowing a thing about it.
@@ -181,7 +195,7 @@ The v1 core is functional: SQLite-backed persistence (stdlib; DuckDB an optional
 backend), a batched writer, event-time keying (`time_field`), latest-per-key
 projections (`latest_key` / `store.latest`), secondary indexes, bounded-memory
 streaming (`store.iter`), TTL pruning, the service layer (`stored.mesh`:
-`AsyncStore` plus declarative record / range / last-known bindings, ranges
-optionally streamed), the Zenoh chronicler (record + serve history), and a runnable
+`AsyncStore`, declarative record / range / last-known bindings with optionally
+streamed ranges, and replay-as-publication), the Zenoh chronicler (record + serve history), and a runnable
 daemon. Deferred: the Postgres backend, complex-field column promotion, the
-cold-archival tiers, and replay-as-publication.
+cold-archival tiers.
