@@ -1,6 +1,6 @@
 [project]
 name = "stored"
-version = "0.2.17"
+version = "0.3.0"
 description = "A zeared-native persistence layer and Zenoh chronicler"
 authors = [
     { name = "Benj Wiswell", email = "benjwiswell@gmail.com" },
@@ -18,14 +18,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# ``stored[zenoh]`` is retired — the Zenoh chronicler now ships with the base
-# install (plan 02). Kept as an empty alias for one release so no pinned install
-# string breaks; remove at 0.3.0.
-zenoh = []
-# The DuckDB backend — an optional upgrade for analytical/aggregation queries
-# (workspace persistence doc 08 §5). The default backend is stdlib ``sqlite3``,
-# so ``stored``'s core install stays lean (the rio tiny-surface ethos targets the
-# columnar engine, never zeared).
+# ``stored[zenoh]`` is gone as of 0.3.0. The Zenoh chronicler ships with the base
+# install (``zeared`` is a core dependency), and the empty alias that kept old install
+# strings resolving has served its release.
+
+# The DuckDB backend — an optional upgrade for analytical/aggregation queries. The
+# default is stdlib ``sqlite3``, so the core install stays lean: the dependency worth
+# making optional is the columnar engine, never the transport.
 duckdb = ["duckdb>=1.1"]
 
 [dependency-groups]

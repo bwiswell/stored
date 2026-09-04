@@ -18,10 +18,9 @@ the durable, time-keyed history layer beneath `zeared`'s last-value retention.
 
 ## Status
 
-The v1 core is functional: persist and query `seared` objects (SQLite backend by
-default; DuckDB optional), a batched writer, event-time keying, latest-per-key
-projections, secondary indexes, bounded-memory streaming (`Store.iter`), TTL
-pruning, a service layer (`stored.mesh`: an async facade plus declarative
-record/range/last-known bindings), the Zenoh chronicler (record + serve history),
-and a runnable daemon. Deferred: the
-Postgres backend, complex-field column promotion, and the cold-archival tiers.
+The core is functional: persist and query `seared` objects (SQLite by default; DuckDB
+optional), a batched writer, event-time keying, latest-per-key projections and
+population reads, secondary and JSON-path indexes, bounded-memory streaming, TTL
+pruning, the service layer (`stored.mesh`), the Zenoh chronicler, and a runnable daemon.
+Deferred: the Postgres backend, complex-field column promotion, and the cold-archival
+tiers.

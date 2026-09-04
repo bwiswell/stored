@@ -19,7 +19,7 @@ StorageBackend
    SQLiteBackend (default)  ·  DuckDBBackend (stored[duckdb])  ·  [ Postgres — later ]
 ```
 
-`zeared` is a core dependency (plan 02), but the **core** knows only `seared`
+`zeared` is a core dependency, but the **core** knows only `seared`
 classes, tables, rows, and time and imports no `zeared` *at runtime* — so a
 Store-only `import stored` stays transport-free (every `zeared` class *is* a
 `seared` class, and the top-level `Chronicler` re-export is lazy). The **zenoh

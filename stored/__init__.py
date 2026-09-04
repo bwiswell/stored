@@ -4,7 +4,7 @@ The public surface is the seared-only **core**: :class:`Store` (persist and
 query seared objects), the :class:`~stored.config.StoredConfig` /
 :class:`~stored.config.StreamSpec` config classes, and the error hierarchy.
 
-``zeared`` is a core dependency (plan 02), so the :class:`Chronicler` — the
+``zeared`` is a core dependency, so the :class:`Chronicler` — the
 Zenoh layer that records mesh traffic into a store and serves it back — is a
 first-class export. It is re-exported **lazily** (PEP 562 ``__getattr__``): the
 name resolves on first access, so a Store-only ``import stored`` never pulls in
@@ -31,7 +31,7 @@ from .store import Store
 if TYPE_CHECKING:
     from .zenoh import Chronicler
 
-__version__ = '0.2.17'
+__version__ = '0.3.0'
 
 __all__ = [
     'BackendError',
