@@ -83,6 +83,28 @@ between pages so recording continues underneath it. Registration emits the
 secondary indexes those reads want — one on the temporal axis, one per declared
 `index=` dimension.
 
+## Async services: `stored.mesh.AsyncStore`
+
+A service on an event loop must not call a blocking store inline. `AsyncStore`
+wraps one so it doesn't have to hand-roll the thread hop:
+
+```python
+from stored.mesh import AsyncStore
+
+store = AsyncStore(stored.Store('history.db', flush_rows=5000))
+store.register(Location, retention=timedelta(days=3), latest_key=('source', 'epc'))
+
+store.record(Location, location)                  # sync — a buffered enqueue
+newest = await store.latest(Location, source='rtls', epc=epc)
+async for row in store.iter(Location, since='-7d'):   # one thread hop per page
+    ...
+```
+
+`register` and `record` stay synchronous on purpose — the first is one-time DDL on
+the open path, the second an enqueue cheaper than the hop that would defer it.
+Everything reaching the backend is awaited, and `iter` hands control back to the
+loop between pages, so a long walk never stalls the service around it.
+
 ## Mesh: the chronicler
 
 ```python

@@ -2,7 +2,7 @@ import stored
 
 
 def test_version():
-    assert stored.__version__ == '0.2.6'
+    assert stored.__version__ == '0.2.7'
 
 
 def test_public_surface():

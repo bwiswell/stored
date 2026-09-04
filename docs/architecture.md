@@ -1,8 +1,11 @@
 # Architecture
 
-`stored` is three concentric layers, mirroring how `seared` → `zeared` nest.
+`stored` is four concentric layers, mirroring how `seared` → `zeared` nest.
 
 ```text
+stored.mesh   (the contract-shaped surface; AsyncStore needs no transport)
+   AsyncStore: await query/latest/iter · sync register/record
+──────────────────────────────────────────────────────────────────
 stored.zenoh  (zeared — a core dependency; Chronicler also re-exported lazily as stored.Chronicler)
    Chronicler: on_message → record      |  on_query → serve history
    session (timestamped) · daemon · CLI
@@ -20,6 +23,12 @@ Store-only `import stored` stays transport-free (every `zeared` class *is* a
 `seared` class, and the top-level `Chronicler` re-export is lazy). The **zenoh
 layer** wires the core's `Writer` to a `zeared` subscriber and the core's query
 planner to a `zeared` queryable.
+
+`stored.mesh` sits above both, holding the shapes a *service* binds rather than the
+transport itself. Its first inhabitant, `AsyncStore`, needs no transport at all — it
+is asyncio over the core, so `from stored.mesh import AsyncStore` stays
+Zenoh-free (a guarded invariant), and the names in that namespace that *do* need
+`zeared` resolve lazily.
 
 ## The gap it fills
 

@@ -35,3 +35,15 @@ def test_chronicler_resolves_at_top_level():
         "assert 'zeared' in sys.modules, 'accessing Chronicler should import zeared'"
     )
     subprocess.run([sys.executable, '-c', code], check=True)
+
+
+def test_async_store_import_stays_transport_free():
+    # ``stored.mesh`` will grow zeared-dependent bindings, but AsyncStore is asyncio
+    # over the core and must stay importable without the transport — the invariant
+    # that keeps ``stored.mesh``'s zeared names lazy as the layer fills in.
+    code = (
+        'from stored.mesh import AsyncStore; import sys; '
+        "assert 'zeared' not in sys.modules, 'stored.mesh pulled zeared'; "
+        "assert 'zenoh' not in sys.modules, 'stored.mesh pulled zenoh'"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
