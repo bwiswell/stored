@@ -23,7 +23,7 @@ config layer.
 | Field       | Type          | Default | Notes                                    |
 |-------------|---------------|---------|------------------------------------------|
 | `cls`        | `str` (req.)  | —       | Import path, `'module:ClassName'`.       |
-| `retention`  | `str \| None` | `None`  | `'7d'`, `'48h'`, … (`None` = forever).   |
+| `retention`  | `str \| None` | `None`  | `'7d'`, `'48h'`, … (`None` = forever). TOML horizons are strings; `Store.register` also takes seconds / a `timedelta`. |
 | `archive`    | `str \| None` | `None`  | Cold-archival horizon (roadmap).         |
 | `index`      | `list[str]`   | `[]`    | Extra field dimensions to filter on.     |
 | `time_field` | `str \| None` | `None`  | Payload field to key retention/queries on (domain event time); `None` uses mesh `_issued_at`. See storage-model. |

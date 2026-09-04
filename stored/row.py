@@ -148,17 +148,21 @@ def build_row(
     return row
 
 
-def rehydrate(stream: Stream, columns: dict[str, Any]) -> s.Seared:
-    """Reconstruct a typed message instance from a stored ``columns`` row.
+def rehydrate[M: s.Seared](cls: type[M], columns: dict[str, Any]) -> M:
+    """Reconstruct a typed ``cls`` instance from a stored ``columns`` row.
+
+    Takes the class rather than the :class:`~stored.registry.Stream` so the
+    reconstructed type is the *caller's*: ``Store.query(cls)`` answers with
+    ``cls``, and ``ty`` can see it.
 
     Args:
-        stream: The registered stream to rebuild an instance for.
+        cls: The class to rebuild — the class the stream is stored as.
         columns: A column-keyed row dict as returned by the backend.
 
     Returns:
-        An instance of ``stream.cls``.
+        An instance of ``cls``.
     """
-    return stream.cls.loads(columns['_payload'])
+    return cls.loads(columns['_payload'])
 
 
 __all__ = ['Meta', 'build_row', 'rehydrate']

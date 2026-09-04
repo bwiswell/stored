@@ -51,16 +51,21 @@ import stored
 
 store = stored.Store('chronicle.db')
 store.register(Telemetry, retention='7d', index=('id',), latest_key=('id',))
+# retention also takes seconds or a timedelta: 604800, timedelta(days=7)
 
 store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
-history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → [Telemetry, …]
-newest  = store.latest(Telemetry, id=7)                  # → last value for id 7, however old
+history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → list[Telemetry]
+newest  = store.latest(Telemetry, id=7)                  # → Telemetry | None, however old
 
 store.flush(); store.prune(); store.close()
 ```
 
 `record` buffers through a batched writer; `query` flushes first, so reads
-always see prior writes.
+always see prior writes. Reads are **typed on the class you ask for** —
+`query(Telemetry)` is a `list[Telemetry]` and `latest(Telemetry, …)` a
+`Telemetry | None` to a type checker, with no cast at the call site. Retention
+horizons accept the duration grammar (`'7d'`), a number of seconds, or a
+`datetime.timedelta`.
 
 ## Mesh: the chronicler
 

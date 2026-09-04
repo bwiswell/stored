@@ -12,7 +12,7 @@ from typing import Any
 import seared as s
 
 from . import schema
-from ._time import parse_duration
+from ._time import Duration, duration_text
 from .backends.base import StorageBackend
 from .errors import ConfigError, QueryError
 from .log import get_logger
@@ -23,6 +23,16 @@ from .ttl import Reaper
 from .writer import Writer
 
 _log = get_logger('store')
+
+
+def _horizon(value: Duration | None) -> str | None:
+    """Canonicalize a retention horizon for registration, as a ``ConfigError`` on bad input."""
+    if value is None:
+        return None
+    try:
+        return duration_text(value)
+    except ValueError as exc:
+        raise ConfigError(f'invalid retention {value!r}: {exc}') from exc
 
 
 def _make_backend(backend: str, path: str) -> StorageBackend:
@@ -93,19 +103,21 @@ class Store:
         self,
         cls: type[s.Seared],
         *,
-        retention: str | None = None,
-        archive: str | None = None,
+        retention: Duration | None = None,
+        archive: Duration | None = None,
         index: tuple[str, ...] = (),
         time_field: str | None = None,
         latest_key: tuple[str, ...] = (),
-        latest_retention: str | None = None,
+        latest_retention: Duration | None = None,
     ) -> Stream:
         """Register a message class as a recorded stream and create its table(s).
 
         Args:
             cls: A ``@s.seared`` / ``@z.zeared`` message class.
-            retention: Retention horizon (e.g. ``'7d'``), or ``None``.
-            archive: Cold-archival horizon (roadmap), or ``None``.
+            retention: Retention horizon — a duration string (``'7d'``), a number
+                of **seconds** (``3600``), or a :class:`datetime.timedelta`;
+                ``None`` keeps forever.
+            archive: Cold-archival horizon (roadmap), same forms, or ``None``.
             index: Extra field names to index as queryable dimensions.
             time_field: A payload field naming the **domain event time** — retention
                 and range queries key off it instead of the mesh delivery time.
@@ -113,7 +125,7 @@ class Store:
                 key (e.g. ``('source', 'epc')``). When set, a ``latest_<name>`` table
                 keeps one newest-wins row per key, read via :meth:`latest`.
             latest_retention: Retention horizon for the latest projection (usually
-                longer than ``retention``), or ``None`` to keep forever.
+                longer than ``retention``, same forms), or ``None`` to keep forever.
 
         Returns:
             The registered :class:`Stream`.
@@ -122,12 +134,9 @@ class Store:
             ConfigError: If ``retention`` / ``latest_retention`` is not a valid duration.
             RegistrationError: If ``time_field`` / ``latest_key`` name unsuitable fields.
         """
-        for horizon in (retention, latest_retention):
-            if horizon is not None:
-                try:
-                    parse_duration(horizon)
-                except ValueError as exc:
-                    raise ConfigError(f'invalid retention {horizon!r}: {exc}') from exc
+        retention = _horizon(retention)
+        archive = _horizon(archive)
+        latest_retention = _horizon(latest_retention)
         stream = self._registry.add(
             cls, retention=retention, archive=archive, index=index, time_field=time_field,
             latest_key=latest_key, latest_retention=latest_retention,
@@ -163,9 +172,9 @@ class Store:
         stream = self._registry.get(cls)
         self._writer.enqueue(stream.table, build_row(stream, msg, meta, key=key))
 
-    def query(
+    def query[M: s.Seared](
         self,
-        cls: type[s.Seared],
+        cls: type[M],
         *,
         key: str | None = None,
         since: TimeBound = None,
@@ -173,7 +182,7 @@ class Store:
         limit: int | None = None,
         order: str = 'asc',
         **filters: Any,
-    ) -> list[s.Seared]:
+    ) -> list[M]:
         """Query stored history for ``cls`` (flushes pending writes first).
 
         Args:
@@ -187,7 +196,8 @@ class Store:
             **filters: Equality filters on indexed field dimensions.
 
         Returns:
-            Decoded instances of ``cls``, time-ordered.
+            Decoded instances of ``cls``, time-ordered. A stream is always queried
+            by — and answers with — the class it is *stored as*.
         """
         stream = self._registry.get(cls)
         window = parse_window(since=since, until=until, limit=limit, order=order)
@@ -195,9 +205,9 @@ class Store:
         self._writer.flush()
         with self._lock:
             rows = self._backend.select(sql, params)
-        return [rehydrate(stream, columns) for columns in rows]
+        return [rehydrate(cls, columns) for columns in rows]
 
-    def latest(self, cls: type[s.Seared], **key: Any) -> s.Seared | None:
+    def latest[M: s.Seared](self, cls: type[M], **key: Any) -> M | None:
         """Return the newest-recorded instance for one logical-entity ``key``.
 
         Reads the stream's latest-per-key projection (see ``latest_key`` on
@@ -210,7 +220,7 @@ class Store:
             **key: The full logical key (every ``latest_key`` field, exactly).
 
         Returns:
-            The decoded instance, or ``None`` when the key has no recorded value.
+            The decoded ``cls`` instance, or ``None`` when the key has no recorded value.
 
         Raises:
             ConfigError: If ``cls`` has no latest projection.
@@ -229,7 +239,7 @@ class Store:
         self._writer.flush()
         with self._lock:
             rows = self._backend.select(sql, params)
-        return rehydrate(stream, rows[0]) if rows else None
+        return rehydrate(cls, rows[0]) if rows else None
 
     def counts(self, cls: type[s.Seared]) -> tuple[int, int]:
         """Row counts ``(history, latest)`` for ``cls`` — for observability/status.

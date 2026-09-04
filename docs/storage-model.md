@@ -119,7 +119,8 @@ configured stream.
 
 `stored` runs an **active** reaper (unlike zeared's lazy last-value expiry):
 
-- per-stream `retention` horizon (`'7d'`, `'48h'`, `'30m'`, …; `None` = keep
+- per-stream `retention` horizon (`'7d'`, `'48h'`, `'30m'`, … — or a number of
+  seconds / a `datetime.timedelta`, canonicalized to the string form; `None` = keep
   forever), validated at `register`;
 - `Reaper.sweep` deletes rows whose temporal axis (`_event_at` for an event-time
   stream, else `_issued_at`) is older than `now − retention`, returning the exact
