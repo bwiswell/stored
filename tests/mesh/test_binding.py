@@ -76,6 +76,7 @@ class LastPosition(zeared.Message):
 @zeared.zeared
 class ZoneRequest(zeared.Zeared):
     zone:   int = zeared.Int(default=0)
+    layer:  str = zeared.Str(default='department')
     source: str = zeared.Str(default='')
     limit:  int = zeared.Int(default=100)
 
@@ -586,6 +587,105 @@ async def test_serve_snapshot_needs_a_latest_projection(session):
         store.register(Placed, index=('source',), time_field='observed_at')  # no latest_key
         with pytest.raises(ConfigError, match='no latest projection'):
             binding.serve_snapshot(Placed)
+    finally:
+        binding.close()
+        await store.close()
+
+
+# -- a target the caller names ----------------------------------------------
+
+async def test_a_computed_target_picks_the_layer_per_request(session):
+    """Zone layers are open-ended, so the request names one and the target follows."""
+    zeared.session = session
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    binding = None
+    try:
+        store.register(
+            Placed, index=('source',), time_field='observed_at', latest_key=('source', 'epc'),
+            json_index=('zones.department', 'zones.front_back'),
+        )
+        store.record(Placed, Placed(source='rtls', epc='E1',
+                                    zones={'department': 5, 'front_back': 1}, observed_at=1000.0))
+        store.record(Placed, Placed(source='rtls', epc='E2',
+                                    zones={'department': 6, 'front_back': 1}, observed_at=1001.0))
+        store.store.flush()
+
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(Placed, filters={'zone': lambda request: f'zones.{request.layer}'})
+        await _settle()
+
+        by_department = await zeared.aquery(
+            Placed, request=ZoneRequest(zone=5, layer='department'), timeout=5.0,
+        )
+        assert [r.epc for r in by_department] == ['E1']
+
+        by_aisle_side = await zeared.aquery(
+            Placed, request=ZoneRequest(zone=1, layer='front_back'), timeout=5.0,
+        )
+        assert sorted(r.epc for r in by_aisle_side) == ['E1', 'E2']
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_an_undeclared_layer_errors_the_query_rather_than_answering_unfiltered(session, caplog):
+    """The trade for a computed target — and its sharp edge, stated exactly.
+
+    An unknown layer raises server-side, so the historian never answers as though the
+    filter had been applied. But zeared drops error replies from ``aquery``'s result,
+    so a caller that passes no ``on_error`` sees an empty list and cannot tell "nobody
+    is there" from "I do not index that layer". Callers that need the difference must
+    pass ``on_error``.
+    """
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(Placed, filters={'zone': lambda request: f'zones.{request.layer}'})
+        await _settle()
+
+        errors: list[Exception] = []
+        with caplog.at_level('WARNING'):
+            answered = await zeared.aquery(
+                Placed, request=ZoneRequest(zone=5, layer='aisle'), timeout=5.0,
+                on_error=lambda exc, _raw: errors.append(exc),
+            )
+
+        assert answered == []  # …indistinguishable from "nobody there" without on_error
+        assert errors or 'aisle' in caplog.text, 'the failure must reach the caller or the log'
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+# -- serve_range projects, like its siblings ---------------------------------
+
+async def test_serve_range_projects_a_row_into_a_different_reply(session):
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_range(ZoneOccupant, of=Placed, filters={'zone': 'zones.department'}, project=to_occupant)
+        await _settle()
+
+        visits = await zeared.aquery(ZoneOccupant, request=ZoneRequest(zone=5), timeout=5.0)
+        assert sorted(v.epc for v in visits) == ['E1', 'E1', 'E3']  # every observation, projected
+        assert {v.zone for v in visits} == {5}
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_serve_range_needs_a_projection_it_can_justify(session):
+    zeared.session = session
+    store = _zoned_store()
+    binding = Binding(store, session=session)
+    try:
+        with pytest.raises(ConfigError, match='needs project'):
+            binding.serve_range(ZoneOccupant, of=Placed, filters={'zone': 'zones.department'})
     finally:
         binding.close()
         await store.close()
