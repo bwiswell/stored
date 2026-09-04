@@ -146,3 +146,19 @@ def test_dialect_json_value_executes_on_this_engine():
             backend.select(f'SELECT 1 AS hit FROM "t" WHERE {baseline} = ?', ['abc'])  # noqa: S608
     finally:
         backend.close()
+
+
+def test_ensure_json_index_is_a_logged_no_op(caplog):
+    """DuckDB's binder refuses an expression index, so the capability gap is logged, not raised."""
+    backend = DuckDBBackend(':memory:')
+    try:
+        backend.ensure_table('t', {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_payload': 'VARCHAR'},
+                             ('_key_expr', '_ts_hlc'))
+        with caplog.at_level('WARNING'):
+            backend.ensure_json_index('ix', 't', 'zn.department', ('_ts_hlc',))
+        assert 'cannot index the expression' in caplog.text
+
+        indexes = {r['index_name'] for r in backend.select("SELECT index_name FROM duckdb_indexes()")}
+        assert 'ix' not in indexes  # …and nothing was created
+    finally:
+        backend.close()

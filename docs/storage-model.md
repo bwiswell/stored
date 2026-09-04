@@ -143,6 +143,19 @@ Three things the declaration buys:
 
 A row whose dict lacks the key simply does not match. Equality only, for now.
 
+**A declared path is indexed** — on the history table and the projection both, since
+either may be filtered. On SQLite that is a real expression index, and the emitted
+DDL renders the expression through the *same* dialect call the planner uses, because
+SQLite matches an expression index textually: spell it differently and the index
+exists but is never chosen. The stream's sort key follows the expression in the same
+index, so one index serves the search *and* the `ORDER BY` — measured, the
+expression alone leaves `USE TEMP B-TREE FOR ORDER BY` in the plan, and appending the
+sort key removes it.
+
+DuckDB's binder refuses `CREATE INDEX` over an expression, so there the emission is a
+**logged no-op**: a declared path stays queryable and scans. That is said out loud at
+registration rather than left to be discovered as a slow query.
+
 ## Indexes
 
 Beyond the `(_key_expr, _ts_hlc)` primary key, `register` emits two kinds of

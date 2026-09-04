@@ -560,3 +560,63 @@ def test_missing_key_simply_does_not_match(tmp_path):
         assert [r.id for r in store.query(Zoned, where={'zones.department': 5})] == [2]
     finally:
         store.close()
+
+
+def _query_plan(store, stream, filters=None, *, table=None, **kwargs):
+    """How SQLite says it will answer a planned read — the only proof an index is used."""
+    from stored.query import parse_window, plan
+
+    sql, params = plan(
+        stream, '', parse_window(), filters, table=table, dialect=store._backend.dialect, **kwargs,
+    )
+    return [row['detail'] for row in store._backend.select('EXPLAIN QUERY PLAN ' + sql, params)]
+
+
+def test_declared_paths_are_indexed_on_both_tables(tmp_path):
+    store = _zoned(tmp_path)
+    try:
+        names = {
+            row['name']
+            for row in store._backend.select(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE '%json%'",
+            )
+        }
+        assert names == {'idx_stream_zoned_json_zones_department', 'idx_latest_zoned_json_zones_department'}
+    finally:
+        store.close()
+
+
+def test_a_path_filter_actually_uses_its_index(tmp_path):
+    """The whole point of Stage 4: declared, emitted — and *chosen* by the planner."""
+    store = _zoned(tmp_path)
+    stream = store.registry.get(Zoned)
+    try:
+        history = _query_plan(store, stream, where={'zones.department': 5})
+        assert any('USING INDEX idx_stream_zoned_json_zones_department' in step for step in history)
+
+        current = _query_plan(store, stream, table=stream.latest_table, where={'zones.department': 5})
+        assert any('USING INDEX idx_latest_zoned_json_zones_department' in step for step in current)
+    finally:
+        store.close()
+
+
+def test_the_path_index_serves_the_ordering_too(tmp_path):
+    """The sort key rides in the index, so a filtered read does not also sort."""
+    store = _zoned(tmp_path)
+    stream = store.registry.get(Zoned)
+    try:
+        steps = _query_plan(store, stream, where={'zones.department': 5})
+        assert not any('TEMP B-TREE' in step for step in steps), steps
+    finally:
+        store.close()
+
+
+def test_a_column_filter_still_uses_its_own_index(tmp_path):
+    """The path index is an addition, not a replacement: dimension filters are unaffected."""
+    store = _zoned(tmp_path)
+    stream = store.registry.get(Zoned)
+    try:
+        steps = _query_plan(store, stream, {'id': 3})
+        assert any('idx_stream_zoned_id' in step for step in steps), steps
+    finally:
+        store.close()

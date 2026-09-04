@@ -57,6 +57,28 @@ class StorageBackend(Protocol):
         """
         ...
 
+    def ensure_json_index(
+        self,
+        name: str,
+        table: str,
+        path: str,
+        sort_columns: Sequence[str] = (),
+    ) -> None:
+        """Create an index on a JSON ``path`` inside ``_payload``, if the engine can.
+
+        Not every engine can index an expression — DuckDB refuses the DDL outright —
+        so an implementation that cannot is expected to say so in the log and carry
+        on. The filter still works; it scans.
+
+        Args:
+            name: Index name (from ``schema.json_index_specs``).
+            table: Table to index.
+            path: The **wire** path inside ``_payload``, e.g. ``zn.department``.
+            sort_columns: Columns appended after the expression, so one index serves
+                both the equality search and the query's ``ORDER BY``.
+        """
+        ...
+
     def append_batch(
         self,
         table: str,
