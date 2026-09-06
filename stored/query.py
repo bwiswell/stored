@@ -9,6 +9,9 @@ SELECT against a stream table, ordered by the stream's temporal axis
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -32,6 +35,41 @@ TimeBound = str | int | float | datetime | None
 #: stream, and ``(_key_expr, _ts_hlc)`` is the primary key, so the triple is unique —
 #: which is what lets a walk resume exactly where it stopped.
 Anchor = tuple[Any, str, str]
+
+
+def encode_anchor(anchor: Anchor) -> str:
+    """An :data:`Anchor` as an opaque cursor a caller can hand back.
+
+    The shape a historian puts on the last reply of a page so the caller can ask for the
+    next one without knowing what a page boundary is made of. URL-safe, no padding; the
+    time value travels as ISO-8601 (both backends hand the temporal column back as a
+    ``datetime``).
+    """
+    time_value, hlc, key = anchor
+    when = time_value.isoformat() if isinstance(time_value, datetime) else time_value
+    raw = json.dumps([when, hlc, key], separators=(',', ':')).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip('=')
+
+
+def decode_anchor(cursor: str) -> Anchor:
+    """The :data:`Anchor` behind a cursor from :func:`encode_anchor`.
+
+    Raises:
+        QueryError: If the cursor is not one this module produced — a caller's tampering
+            or a cursor from another store is a bad request, not a fresh first page.
+    """
+    try:
+        padded = cursor + '=' * (-len(cursor) % 4)
+        when, hlc, key = json.loads(base64.urlsafe_b64decode(padded))
+        if not isinstance(hlc, str) or not isinstance(key, str):
+            msg = 'anchor parts are not strings'
+            raise TypeError(msg)  # noqa: TRY301 — one exit for every malformed shape
+        time_value = datetime.fromisoformat(when) if isinstance(when, str) else when
+    except (ValueError, TypeError, binascii.Error) as exc:
+        msg = f'malformed cursor: {cursor!r}'
+        raise QueryError(msg) from exc
+    return (time_value, hlc, key)
+
 
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 100_000
@@ -240,4 +278,15 @@ def plan(
     return sql, params
 
 
-__all__ = ['DEFAULT_CHUNK', 'DEFAULT_LIMIT', 'MAX_LIMIT', 'Anchor', 'TimeBound', 'Window', 'parse_window', 'plan']
+__all__ = [
+    'DEFAULT_CHUNK',
+    'DEFAULT_LIMIT',
+    'MAX_LIMIT',
+    'Anchor',
+    'TimeBound',
+    'Window',
+    'decode_anchor',
+    'encode_anchor',
+    'parse_window',
+    'plan',
+]

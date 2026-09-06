@@ -202,3 +202,20 @@ def test_plan_combines_path_filters_with_column_filters():
     assert '"id" = ?' in sql
     assert 'json_extract' in sql
     assert params == [7, 5]
+
+
+# -- the anchor as a cursor --------------------------------------------------
+
+
+def test_an_anchor_round_trips_through_an_opaque_cursor():
+    anchor = (datetime.datetime(2026, 9, 6, 12, 0, 0, 123456), '0001-abc', 'rio/x/1')
+    cursor = query.encode_anchor(anchor)
+    assert '=' not in cursor
+    assert cursor.isalnum() or set(cursor) <= set('-_') | set(cursor)  # URL-safe alphabet only
+    assert query.decode_anchor(cursor) == anchor
+
+
+@pytest.mark.parametrize('bad', ['', 'not-base64!', 'e30', 'WzEsMiwzXQ'])  # empty, junk, `{}`, `[1,2,3]`
+def test_a_cursor_this_module_did_not_make_is_a_query_error(bad):
+    with pytest.raises(QueryError):
+        query.decode_anchor(bad)

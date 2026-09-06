@@ -631,3 +631,59 @@ def test_a_column_filter_still_uses_its_own_index(tmp_path):
         assert any('idx_stream_zoned_id' in step for step in steps), steps
     finally:
         store.close()
+
+
+# -- query_page: iter's walk, one request-sized step at a time ---------------
+
+
+def test_query_page_steps_through_the_walk_iter_runs(tmp_path):
+    store = _filled(tmp_path, 7)
+    try:
+        seen: list[int] = []
+        anchor = None
+        pages = 0
+        while True:
+            rows, anchor = store.query_page(Msg, limit=3, after=anchor)
+            pages += 1
+            seen.extend(m.id for m in rows)
+            if anchor is None:
+                break
+        assert seen == list(range(7))
+        assert pages == 3  # 3 + 3 + the short page that ends the walk
+        # A full page always hands back an anchor; the page after it may be empty, and final.
+        rows, anchor = store.query_page(Msg, limit=7)
+        assert len(rows) == 7
+        assert anchor is not None
+        assert store.query_page(Msg, limit=7, after=anchor) == ([], None)
+    finally:
+        store.close()
+
+
+def test_query_page_honours_order_and_filters(tmp_path):
+    store = _filled(tmp_path, 10)
+    try:
+        rows, anchor = store.query_page(Msg, limit=4, order='desc')
+        assert [m.id for m in rows] == [9, 8, 7, 6]
+        rows, _ = store.query_page(Msg, limit=4, order='desc', after=anchor)
+        assert [m.id for m in rows] == [5, 4, 3, 2]
+        rows, anchor = store.query_page(Msg, limit=4, id=3)
+        assert ([m.id for m in rows], anchor) == ([3], None)
+    finally:
+        store.close()
+
+
+def test_query_latest_page_walks_current_state(tmp_path):
+    store = _filled(tmp_path, 5, latest_key=('id',))
+    try:
+        store.record(Msg, Msg(id=1, name='again'))  # a newer row for one entity: still one entity
+        store.flush()
+        seen: list[tuple[int, str]] = []
+        anchor = None
+        while True:
+            rows, anchor = store.query_latest_page(Msg, limit=2, after=anchor)
+            seen.extend((m.id, m.name) for m in rows)
+            if anchor is None:
+                break
+        assert seen == [(0, 'n0'), (2, 'n2'), (3, 'n3'), (4, 'n4'), (1, 'again')]  # by last-seen
+    finally:
+        store.close()

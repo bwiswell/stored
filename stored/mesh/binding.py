@@ -25,7 +25,7 @@ import zeared as z
 
 from ..errors import ConfigError, QueryError
 from ..log import get_logger
-from ..query import DEFAULT_CHUNK, MAX_LIMIT
+from ..query import DEFAULT_CHUNK, MAX_LIMIT, decode_anchor, encode_anchor
 from .async_store import AsyncStore
 
 if TYPE_CHECKING:
@@ -231,6 +231,7 @@ class Binding:
         limit: str | None = None,
         default_limit: int | None = None,
         max_limit: int | None = None,
+        cursor: str | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
         unset: tuple[Any, ...] = UNSET_FALSY,
@@ -270,6 +271,13 @@ class Binding:
                 ``default_limit`` only fills in an omission; this one clamps. Worth
                 setting wherever replies are collected into a single frame downstream —
                 a caller asking for a hundred thousand rows should not get them.
+            cursor: Request **and** reply field naming the page cursor, if the query
+                pages. The request's value (empty = first page) resumes the keyset walk
+                after the row it names; the **last reply of a full page** carries the
+                cursor for the next page, every other reply an empty one — a multi-reply
+                queryable has no envelope, so the last row is where a caller reads it.
+                The reply class must declare the field; needs a collected reply
+                (``stream=False``), since a streamed reply has no last row to stamp.
             stream: Reply row-by-row from a paged walk instead of one materialized
                 list. No contract change — the same replies, produced lazily.
             chunk: Rows per page while streaming (the memory bound and thread-hop
@@ -282,7 +290,9 @@ class Binding:
 
         Raises:
             ConfigError: If the stored class is not registered, ``cls`` declares no
-                ``REQUEST``, or the reply differs from the row without a ``project``.
+                ``REQUEST``, the reply differs from the row without a ``project``, or
+                ``cursor`` names a field the request or reply lacks (or is combined
+                with ``stream``).
         """
         stored_cls: type[s.Seared] = of or cls
         what = f'serve_range({cls.__name__})'
@@ -290,6 +300,7 @@ class Binding:
         request_cls = self._require_request(cls, 'serve_range')
         shape = self._projection(cls, stored_cls, project, what)
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
+        paging = self._paging(cls, request_cls, cursor, stream=stream, what=what)
 
         def _cap(request: Any) -> int | None:
             return _effective_limit(
@@ -327,8 +338,12 @@ class Binding:
             if not isinstance(request, request_cls):
                 _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
                 return []
-            rows = await self._store.query(stored_cls, **_read(request))
-            return [shape(row, request) for row in rows]
+            if paging is None:
+                rows = await self._store.query(stored_cls, **_read(request))
+                return [shape(row, request) for row in rows]
+            after = self._after(request, paging, unset)
+            rows, anchor = await self._store.query_page(stored_cls, after=after, **_read(request))
+            return self._stamped([shape(row, request) for row in rows], paging, anchor)
 
         async def _stream(ctx: QueryContext) -> AsyncIterator[M]:
             request = ctx.request
@@ -354,6 +369,7 @@ class Binding:
         limit: str | None = None,
         default_limit: int | None = None,
         max_limit: int | None = None,
+        cursor: str | None = None,
         project: Callable[[Any, Any], R] | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
@@ -385,6 +401,8 @@ class Binding:
             max_limit: The service's ceiling, applied whatever the request asks — see
                 :meth:`serve_range`. A population snapshot is exactly where an
                 unclamped request hurts.
+            cursor: Request and reply field naming the page cursor — see
+                :meth:`serve_range`; a population is exactly what wants paging.
             project: ``(row, request) -> reply``; required when ``of`` differs from
                 ``cls``.
             stream: Reply row-by-row from a paged walk instead of one list.
@@ -410,6 +428,7 @@ class Binding:
         request_cls = self._require_request(cls, 'serve_snapshot')
         shape = self._projection(cls, stored_cls, project, what)
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
+        paging = self._paging(cls, request_cls, cursor, stream=stream, what=what)
 
         def _cap(request: Any) -> int | None:
             return _effective_limit(
@@ -446,8 +465,12 @@ class Binding:
             if not isinstance(request, request_cls):
                 _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
                 return []
-            rows = await self._store.query_latest(stored_cls, **_read(request))
-            return [shape(row, request) for row in rows]
+            if paging is None:
+                rows = await self._store.query_latest(stored_cls, **_read(request))
+                return [shape(row, request) for row in rows]
+            after = self._after(request, paging, unset)
+            rows, anchor = await self._store.query_latest_page(stored_cls, after=after, **_read(request))
+            return self._stamped([shape(row, request) for row in rows], paging, anchor)
 
         async def _stream(ctx: QueryContext) -> AsyncIterator[R]:
             request = ctx.request
@@ -699,6 +722,43 @@ class Binding:
             msg = f'{what}({message_cls.__name__}): the class declares no REQUEST payload type'
             raise ConfigError(msg)
         return request_cls
+
+    @staticmethod
+    def _paging(reply_cls: type, request_cls: type, cursor: str | None, *, stream: bool, what: str) -> str | None:
+        """Validate a ``cursor`` declaration at bind time: the field on both sides, no streaming.
+
+        Raises:
+            ConfigError: If the request or the reply lacks the field, or ``stream`` is set —
+                a streamed reply has no last row to carry the next cursor.
+        """
+        if cursor is None:
+            return None
+        if stream:
+            msg = f'{what}: cursor paging needs a collected reply (stream=False) — a streamed reply has no last row'
+            raise ConfigError(msg)
+        for side, cls in (('request', request_cls), ('reply', reply_cls)):
+            if cursor not in {name for name, _key, _field in getattr(cls, '__seared_fields__', ())}:
+                msg = f'{what}: the {side} {cls.__name__} declares no {cursor!r} field to carry the page cursor'
+                raise ConfigError(msg)
+        return cursor
+
+    @classmethod
+    def _after(cls, request: Any, cursor: str, unset: tuple[Any, ...]) -> Any:
+        """The anchor a request's cursor resumes after, or ``None`` for the first page.
+
+        Raises:
+            QueryError: If the cursor is not one this store produced (surfaces as an error
+                reply, never as a silently restarted first page).
+        """
+        raw = cls._bound(request, cursor, unset)
+        return decode_anchor(raw) if raw else None
+
+    @staticmethod
+    def _stamped[R](replies: list[R], cursor: str, anchor: Any) -> list[R]:
+        """The page's replies with the next cursor on the last one (a full page), else untouched."""
+        if anchor is not None and replies:
+            setattr(replies[-1], cursor, encode_anchor(anchor))
+        return replies
 
     @staticmethod
     def _bound(request: Any, field: str | None, unset: tuple[Any, ...]) -> Any:
