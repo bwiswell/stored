@@ -21,6 +21,7 @@ class HistoryRequest(zeared.Zeared):
     from_ts: float = zeared.Float(default=0.0)
     to_ts: float = zeared.Float(default=0.0)
     limit: int = zeared.Int(default=100)
+    cursor: str = zeared.Str(default='')
 
 
 @zeared.zeared
@@ -35,6 +36,7 @@ class Event(zeared.Message):
     kind: str = zeared.Str(required=True)
     raised_at: float = zeared.Float(required=True)
     note: str = zeared.Str(default='')
+    cursor: str = zeared.Str(default='')  # reply-only: the next page, on the last reply of a full one
 
 
 @zeared.zeared
@@ -81,6 +83,7 @@ class ZoneRequest(zeared.Zeared):
     layer: str = zeared.Str(default='department')
     source: str = zeared.Str(default='')
     limit: int = zeared.Int(default=100)
+    cursor: str = zeared.Str(default='')
 
 
 @zeared.zeared
@@ -95,6 +98,7 @@ class Placed(zeared.Message):
     epc: str = zeared.Str(required=True)
     zones: dict[str, int] = zeared.Dict(default_factory=dict)
     observed_at: float = zeared.Float(required=True)
+    cursor: str = zeared.Str(default='')
 
 
 @zeared.zeared
@@ -780,6 +784,102 @@ async def test_max_limit_bounds_an_omitted_limit_when_streaming(session):
 
         streamed = await zeared.aquery(Event, request=HistoryRequest(), timeout=5.0)
         assert len(streamed) == 4
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+# -- paging: a cursor in, a cursor on the last reply of a full page -----------
+
+
+async def test_serve_range_pages_with_a_cursor_on_the_last_reply_of_a_full_page(session):
+    zeared.session = session
+    store, binding = _store(), None
+    try:
+        for i in range(5):
+            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+        await store.flush()
+
+        binding = Binding(store, session=session)
+        binding.serve_range(Event, filters=('source',), limit='limit', cursor='cursor')
+        await _settle()
+
+        first = await zeared.aquery(Event, request=HistoryRequest(limit=2), timeout=5.0)
+        assert [r.raised_at for r in first] == [1000.0, 1001.0]
+        assert [bool(r.cursor) for r in first] == [False, True]  # only the last reply carries it
+
+        second = await zeared.aquery(Event, request=HistoryRequest(limit=2, cursor=first[-1].cursor), timeout=5.0)
+        assert [r.raised_at for r in second] == [1002.0, 1003.0]
+
+        last = await zeared.aquery(Event, request=HistoryRequest(limit=2, cursor=second[-1].cursor), timeout=5.0)
+        assert [r.raised_at for r in last] == [1004.0]
+        assert last[0].cursor == ''  # a short page: nothing follows
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_serve_snapshot_pages_current_state_and_a_full_last_page_ends_on_an_empty_one(session):
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(Placed, filters={'zone': 'zones.department'}, limit='limit', cursor='cursor')
+        await _settle()
+
+        # Department 5 holds E1 (last seen 2000) and E3 (2001): pages of one, by last-seen.
+        first = await zeared.aquery(Placed, request=ZoneRequest(zone=5, limit=1), timeout=5.0)
+        assert [(r.epc, bool(r.cursor)) for r in first] == [('E1', True)]
+        second = await zeared.aquery(Placed, request=ZoneRequest(zone=5, limit=1, cursor=first[0].cursor), timeout=5.0)
+        # A full page cannot know it is the last, so it hands back a cursor; the page after it is empty.
+        assert [(r.epc, bool(r.cursor)) for r in second] == [('E3', True)]
+        third = await zeared.aquery(Placed, request=ZoneRequest(zone=5, limit=1, cursor=second[0].cursor), timeout=5.0)
+        assert third == []
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_cursor_paging_is_validated_at_bind_time(session):
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        with pytest.raises(ConfigError, match=r'no .cursor. field'):  # the reply lacks it
+            binding.serve_snapshot(
+                ZoneOccupant, of=Placed, filters={'zone': 'zones.department'}, project=to_occupant, cursor='cursor'
+            )
+        with pytest.raises(ConfigError, match=r'no .page. field'):  # the request lacks it
+            binding.serve_snapshot(Placed, filters={'zone': 'zones.department'}, cursor='page')
+        with pytest.raises(ConfigError, match='collected reply'):  # a streamed reply has no last row
+            binding.serve_snapshot(Placed, filters={'zone': 'zones.department'}, cursor='cursor', stream=True)
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_a_malformed_cursor_errors_the_query_rather_than_restarting_it(session, caplog):
+    zeared.session = session
+    store, binding = _zoned_store(), None
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_snapshot(Placed, filters={'zone': 'zones.department'}, limit='limit', cursor='cursor')
+        await _settle()
+
+        errors: list[Exception] = []
+        with caplog.at_level('WARNING'):
+            answered = await zeared.aquery(
+                Placed,
+                request=ZoneRequest(zone=5, cursor='not-a-cursor'),
+                timeout=5.0,
+                on_error=lambda exc, _raw: errors.append(exc),
+            )
+        assert answered == []  # never silently the first page again
+        assert errors or 'cursor' in caplog.text
     finally:
         if binding:
             binding.close()

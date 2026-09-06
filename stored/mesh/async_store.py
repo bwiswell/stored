@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import seared as s
 
-from ..query import DEFAULT_CHUNK, TimeBound
+from ..query import DEFAULT_CHUNK, Anchor, TimeBound
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -107,6 +107,62 @@ class AsyncStore:
                 limit=limit,
                 order=order,
                 where=where,
+                **filters,
+            ),
+        )
+
+    async def query_page[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        where: dict[str, Any] | None = None,
+        after: Anchor | None = None,
+        **filters: Any,
+    ) -> tuple[list[M], Anchor | None]:
+        """Await :meth:`stored.Store.query_page` — one resumable page of history."""
+        return await asyncio.to_thread(
+            lambda: self._store.query_page(
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                where=where,
+                after=after,
+                **filters,
+            ),
+        )
+
+    async def query_latest_page[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        where: dict[str, Any] | None = None,
+        after: Anchor | None = None,
+        **filters: Any,
+    ) -> tuple[list[M], Anchor | None]:
+        """Await :meth:`stored.Store.query_latest_page` — one resumable page of current state."""
+        return await asyncio.to_thread(
+            lambda: self._store.query_latest_page(
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                where=where,
+                after=after,
                 **filters,
             ),
         )

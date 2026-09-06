@@ -138,6 +138,7 @@ binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),
                      project=to_last_position, missing=no_position)
 
 binding.serve_range(Event, filters=('source',), stream=True)   # reply row by row
+binding.serve_range(Event, filters=('source',), limit='limit', cursor='cursor')  # paged: the last reply of a full page carries the next cursor
 
 binding.serve_snapshot(Placed, filters={'zone': 'zones.department'})  # current state, by zone
 ```

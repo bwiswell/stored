@@ -248,6 +248,49 @@ class Store:
         window = parse_window(since=since, until=until, limit=limit, order=order)
         return self._select(cls, stream, stream.table, window, key or '', filters or None, where)
 
+    def query_page[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        where: dict[str, Any] | None = None,
+        after: Anchor | None = None,
+        **filters: Any,
+    ) -> tuple[list[M], Anchor | None]:
+        """One resumable page of :meth:`query`: the rows after ``after``, and where they stop.
+
+        :meth:`iter` is the keyset walk run in-process; this is the same walk cut into
+        request-sized steps for a caller on the far side of a query boundary — a historian
+        answers one page and hands back the anchor (see :func:`~stored.query.encode_anchor`)
+        the caller passes in to continue. The step semantics are :meth:`iter`'s: a full
+        page always returns an anchor (the next page may then turn out empty), a short one
+        ends the walk with ``None``, and rows with no event time are skipped, since they
+        have no place on the axis the walk resumes along.
+
+        Args:
+            cls: The registered message class.
+            key: Topic key to match (``None`` matches all; ``*`` globs).
+            since: Lower time bound — ISO-8601, relative (``'-1h'``), unix seconds,
+                a ``datetime``, or ``None``.
+            until: Upper time bound (same forms).
+            limit: Rows per page (defaults + clamps per the query planner).
+            order: ``'asc'`` or ``'desc'`` by time. Resume with the same order.
+            where: Equality filters on declared ``json_index`` paths.
+            after: Resume strictly after this anchor; ``None`` is the first page.
+            **filters: Equality filters on indexed field dimensions.
+
+        Returns:
+            ``(rows, anchor)`` — decoded ``cls`` instances in order, and the anchor to
+            continue from, or ``None`` when this was the last page.
+        """
+        stream = self._registry.get(cls)
+        window = parse_window(since=since, until=until, limit=limit, order=order)
+        return self._select_page(cls, stream, stream.table, window, key or '', filters or None, where, after)
+
     def iter[M: s.Seared](
         self,
         cls: type[M],
@@ -336,6 +379,38 @@ class Store:
             rows = self._backend.select(sql, params)
         return [rehydrate(cls, columns) for columns in rows]
 
+    def _select_page[M: s.Seared](
+        self,
+        cls: type[M],
+        stream: Stream,
+        table: str,
+        window: Window,
+        key_expr: str,
+        filters: dict[str, Any] | None,
+        where: dict[str, Any] | None,
+        after: Anchor | None,
+    ) -> tuple[list[M], Anchor | None]:
+        """One keyset step of :meth:`_pages`, answered with the anchor it stopped at."""
+        sql, params = plan(
+            stream,
+            key_expr,
+            window,
+            filters,
+            where=where,
+            after=after,
+            skip_null_time=True,
+            table=table,
+            dialect=self._backend.dialect,
+        )
+        self._writer.flush()
+        with self._lock:
+            rows = self._backend.select(sql, params)
+        items = [rehydrate(cls, columns) for columns in rows]
+        if not rows or len(rows) < window.limit:
+            return items, None  # a short page ends the walk
+        last = rows[-1]
+        return items, (last[stream.time_column], last['_ts_hlc'], last['_key_expr'])
+
     def _pages[M: s.Seared](
         self,
         cls: type[M],
@@ -422,6 +497,45 @@ class Store:
         stream = self._require_latest(cls, 'query_latest')
         window = parse_window(since=since, until=until, limit=limit, order=order)
         return self._select(cls, stream, stream.latest_table, window, key or '', filters or None, where)
+
+    def query_latest_page[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        where: dict[str, Any] | None = None,
+        after: Anchor | None = None,
+        **filters: Any,
+    ) -> tuple[list[M], Anchor | None]:
+        """One resumable page of :meth:`query_latest` — :meth:`query_page` over current state.
+
+        Same step semantics as :meth:`query_page`; the rows are one per entity, ordered by
+        last-seen, which is the axis the anchor resumes along.
+
+        Args:
+            cls: A registered class with a latest projection.
+            key: Topic key to match (``None`` matches all; ``*`` globs).
+            since: Lower bound on when the entity was last seen.
+            until: Upper bound on the same.
+            limit: Rows per page (defaults + clamps per the query planner).
+            order: ``'asc'`` or ``'desc'`` by last-seen time. Resume with the same order.
+            where: Equality filters on declared ``json_index`` paths.
+            after: Resume strictly after this anchor; ``None`` is the first page.
+            **filters: Equality filters on indexed field dimensions.
+
+        Returns:
+            ``(rows, anchor)`` as :meth:`query_page` returns them.
+
+        Raises:
+            ConfigError: If ``cls`` has no latest projection.
+        """
+        stream = self._require_latest(cls, 'query_latest_page')
+        window = parse_window(since=since, until=until, limit=limit, order=order)
+        return self._select_page(cls, stream, stream.latest_table, window, key or '', filters or None, where, after)
 
     def iter_latest[M: s.Seared](
         self,
