@@ -101,19 +101,24 @@ class StorageBackend(Protocol):
         rows: Sequence[dict[str, Any]],
         key_columns: Sequence[str],
         compare_column: str,
+        *,
+        run_gap_s: float | None = None,
     ) -> None:
         """Upsert ``rows`` into a latest-per-key ``table``, newest-wins.
 
         One row per ``key_columns`` value; on conflict, overwrite only when the
         incoming ``compare_column`` is **at least as new** as the stored one
         (tolerating out-of-order / redelivered batches). ``table`` must have
-        ``key_columns`` as its primary key.
+        ``key_columns`` as its primary key. With ``run_gap_s``, the table's
+        :data:`~stored.schema.RUN_START` column is maintained too (see
+        :mod:`stored.latest`).
 
         Args:
             table: Target latest-projection table.
             rows: Column-keyed row dicts (the same shape appended to history).
             key_columns: The logical-entity key (the table's primary key).
             compare_column: The temporal column compared for newest-wins.
+            run_gap_s: The run gap in seconds, or ``None`` when the stream keeps no run.
         """
         ...
 

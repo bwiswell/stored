@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import seared as s
 
 from . import schema
-from ._time import Duration, duration_text
+from ._time import Duration, duration_text, parse_duration
 from .errors import RegistrationError
 
 
@@ -35,6 +35,10 @@ class Stream:
         latest_retention: Retention horizon for the latest projection (usually longer
             than ``retention``), canonicalized as ``retention`` is, or ``None`` to
             keep forever.
+        latest_run_gap: When set, the latest projection also keeps each entity's **run
+            start** — when its current run of records began, where a silence longer than
+            this gap starts a new run — canonicalized as ``retention`` is. ``None`` keeps
+            no run.
         json_paths: Declared path → the same path in payload (wire) spelling. The
             filterable paths *inside* a ``Dict`` field, for the fields whose keys are
             open-ended by design and so can never be columns.
@@ -48,6 +52,7 @@ class Stream:
     time_field: str | None = None
     latest_key: tuple[str, ...] = field(default_factory=tuple)
     latest_retention: str | None = None
+    latest_run_gap: str | None = None
     json_paths: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -68,6 +73,13 @@ class Stream:
     def latest_table(self) -> str:
         """The backing table name for the latest projection (``latest_<snake>``)."""
         return schema.latest_table_name(self.cls)
+
+    @property
+    def latest_run_gap_seconds(self) -> float | None:
+        """The run gap in seconds, or ``None`` when the projection keeps no run."""
+        if self.latest_run_gap is None:
+            return None
+        return parse_duration(self.latest_run_gap).total_seconds()
 
 
 def _validate_time_field(cls: type[s.Seared], time_field: str) -> None:
@@ -168,6 +180,7 @@ class StreamRegistry:
         time_field: str | None = None,
         latest_key: tuple[str, ...] = (),
         latest_retention: Duration | None = None,
+        latest_run_gap: Duration | None = None,
         json_index: tuple[str, ...] = (),
     ) -> Stream:
         """Register ``cls`` as a stream and return the :class:`Stream`.
@@ -182,12 +195,15 @@ class StreamRegistry:
             latest_key: Field names forming a latest-per-key projection's logical key.
             latest_retention: Retention horizon for the latest projection (same
                 forms), or ``None``.
+            latest_run_gap: The silence that starts a new run in the latest projection
+                (same forms), or ``None`` for no run. Needs ``latest_key``.
             json_index: Dotted paths into ``Dict`` fields to make filterable, e.g.
                 ``('zones.department',)``.
 
         Raises:
             RegistrationError: If ``cls`` is not a seared class, is already
-                registered, or ``time_field`` / ``latest_key`` name unsuitable fields.
+                registered, ``time_field`` / ``latest_key`` name unsuitable fields, or a
+                ``latest_run_gap`` is given without a ``latest_key`` or is not positive.
             ValueError: If a horizon is not a recognized duration. (:meth:`Store.register`
                 surfaces this as a ``ConfigError``.)
         """
@@ -201,6 +217,14 @@ class StreamRegistry:
             _validate_time_field(cls, time_field)
         if latest_key:
             _validate_latest_key(cls, tuple(latest_key))
+        run_gap = duration_text(latest_run_gap) if latest_run_gap is not None else None
+        if run_gap is not None:
+            if not latest_key:
+                msg = f'latest_run_gap on {cls.__name__} needs a latest_key: a run belongs to an entity'
+                raise RegistrationError(msg)
+            if parse_duration(run_gap).total_seconds() <= 0:
+                msg = f'latest_run_gap on {cls.__name__} must be positive, got {latest_run_gap!r}'
+                raise RegistrationError(msg)
         json_paths = _validate_json_index(cls, tuple(json_index))
         stream = Stream(
             cls=cls,
@@ -211,6 +235,7 @@ class StreamRegistry:
             time_field=time_field,
             latest_key=tuple(latest_key),
             latest_retention=duration_text(latest_retention) if latest_retention is not None else None,
+            latest_run_gap=run_gap,
             json_paths=json_paths,
         )
         self._by_cls[cls] = stream

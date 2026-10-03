@@ -24,6 +24,7 @@ from ..query import DEFAULT_CHUNK, Anchor, TimeBound
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from ..latest import LatestMeta
     from ..registry import Stream
     from ..row import Meta
     from ..store import Store
@@ -170,6 +171,101 @@ class AsyncStore:
     async def latest[M: s.Seared](self, cls: type[M], **key: Any) -> M | None:
         """Await :meth:`stored.Store.latest` on a worker thread."""
         return await asyncio.to_thread(lambda: self._store.latest(cls, **key))
+
+    async def latest_with_meta[M: s.Seared](self, cls: type[M], **key: Any) -> tuple[M, LatestMeta] | None:
+        """Await :meth:`stored.Store.latest_with_meta` on a worker thread."""
+        return await asyncio.to_thread(lambda: self._store.latest_with_meta(cls, **key))
+
+    async def query_latest_with_meta[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        where: dict[str, Any] | None = None,
+        **filters: Any,
+    ) -> list[tuple[M, LatestMeta]]:
+        """Await :meth:`stored.Store.query_latest_with_meta`."""
+        return await asyncio.to_thread(
+            lambda: self._store.query_latest_with_meta(
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                where=where,
+                **filters,
+            ),
+        )
+
+    async def query_latest_page_with_meta[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        where: dict[str, Any] | None = None,
+        after: Anchor | None = None,
+        **filters: Any,
+    ) -> tuple[list[tuple[M, LatestMeta]], Anchor | None]:
+        """Await :meth:`stored.Store.query_latest_page_with_meta`."""
+        return await asyncio.to_thread(
+            lambda: self._store.query_latest_page_with_meta(
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                where=where,
+                after=after,
+                **filters,
+            ),
+        )
+
+    async def iter_latest_with_meta[M: s.Seared](
+        self,
+        cls: type[M],
+        *,
+        key: str | None = None,
+        since: TimeBound = None,
+        until: TimeBound = None,
+        limit: int | None = None,
+        order: str = 'asc',
+        chunk: int = DEFAULT_CHUNK,
+        where: dict[str, Any] | None = None,
+        **filters: Any,
+    ) -> AsyncIterator[tuple[M, LatestMeta]]:
+        """Stream :meth:`stored.Store.iter_latest_with_meta` — one thread hop per page, as :meth:`iter`."""
+        walk = await asyncio.to_thread(
+            lambda: self._store.iter_latest_with_meta(
+                cls,
+                key=key,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+                chunk=chunk,
+                where=where,
+                **filters,
+            ),
+        )
+        try:
+            while True:
+                page = await asyncio.to_thread(lambda: list(itertools.islice(walk, chunk)))
+                for entry in page:
+                    yield entry
+                if len(page) < chunk:
+                    return
+        finally:
+            walk.close()
 
     async def query_latest[M: s.Seared](
         self,

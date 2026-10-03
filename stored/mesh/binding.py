@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     import seared as s
     from zeared import QueryContext, ZenohMeta
 
+    from ..latest import LatestMeta
     from ..store import Store
 
 _log = get_logger('mesh.binding')
@@ -381,7 +382,8 @@ class Binding:
         default_limit: int | None = None,
         max_limit: int | None = None,
         cursor: str | None = None,
-        project: Callable[[Any, Any], R] | None = None,
+        project: Callable[..., R] | None = None,
+        with_meta: bool = False,
         expand: Mapping[str, Expander] | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
@@ -417,6 +419,9 @@ class Binding:
                 :meth:`serve_range`; a population is exactly what wants paging.
             project: ``(row, request) -> reply``; required when ``of`` differs from
                 ``cls``.
+            with_meta: Call ``project(row, request, meta)`` instead, ``meta`` being the
+                :class:`~stored.LatestMeta` the projection keeps beside the row (an
+                entity's run start, say). Needs ``project``.
             expand: ``{filter field: fn(request) -> value | values}`` — see
                 :meth:`serve_range`.
             stream: Reply row-by-row from a paged walk instead of one list.
@@ -429,8 +434,8 @@ class Binding:
 
         Raises:
             ConfigError: If the stored class is unregistered, keeps no latest
-                projection, declares no ``REQUEST``, needs a ``project`` hook, or
-                ``expand`` names a field that is not a filter.
+                projection, declares no ``REQUEST``, needs a ``project`` hook (or asks
+                ``with_meta`` without one), or ``expand`` names a field that is not a filter.
         """
         stored_cls: type[s.Seared] = of or cls
         what = f'serve_snapshot({cls.__name__})'
@@ -441,7 +446,9 @@ class Binding:
                 msg,
             )
         request_cls = self._require_request(cls, 'serve_snapshot')
-        shape = self._projection(cls, stored_cls, project, what)
+        reply = self._meta_projection(
+            self._projection(cls, stored_cls, project, what), project, with_meta=with_meta, what=what
+        )
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
         expanders = self._expanders(expand, _as_targets(filters), what)
         paging = self._paging(cls, request_cls, cursor, stream=stream, what=what)
@@ -482,19 +489,19 @@ class Binding:
                 _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
                 return []
             if paging is None:
-                rows = await self._store.query_latest(stored_cls, **_read(request))
-                return [shape(row, request) for row in rows]
+                entries = await self._store.query_latest_with_meta(stored_cls, **_read(request))
+                return [reply(row, request, meta) for row, meta in entries]
             after = self._after(request, paging, unset)
-            rows, anchor = await self._store.query_latest_page(stored_cls, after=after, **_read(request))
-            return self._stamped([shape(row, request) for row in rows], paging, anchor)
+            entries, anchor = await self._store.query_latest_page_with_meta(stored_cls, after=after, **_read(request))
+            return self._stamped([reply(row, request, meta) for row, meta in entries], paging, anchor)
 
         async def _stream(ctx: QueryContext) -> AsyncIterator[R]:
             request = ctx.request
             if not isinstance(request, request_cls):
                 _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
                 return
-            async for row in self._store.iter_latest(stored_cls, chunk=chunk, **_read(request)):
-                yield shape(row, request)
+            async for row, meta in self._store.iter_latest_with_meta(stored_cls, chunk=chunk, **_read(request)):
+                yield reply(row, request, meta)
 
         handler = _stream if stream else _collect
         handle = cls.on_query(handler, session=self._session, on_error=on_error)
@@ -507,7 +514,8 @@ class Binding:
         *,
         of: type[s.Seared] | None = None,
         key: Sequence[str] | Mapping[str, str],
-        project: Callable[[Any, Any], R] | None = None,
+        project: Callable[..., R] | None = None,
+        with_meta: bool = False,
         missing: Callable[[Any], R | None] | None = None,
         expand: Mapping[str, Expander] | None = None,
         unset: tuple[Any, ...] = UNSET_FALSY,
@@ -530,6 +538,8 @@ class Binding:
             key: Request fields forming the entity key — names, or ``{field: column}``.
             project: ``(row, request) -> reply``; required when ``of`` differs from
                 ``cls``.
+            with_meta: Call ``project(row, request, meta)`` instead — see
+                :meth:`serve_snapshot`. Needs ``project``.
             missing: ``(request) -> reply | None`` when nothing is stored for the key.
                 ``None`` replies nothing at all.
             expand: ``{key field: fn(request) -> value | values}`` — what a key field
@@ -567,7 +577,8 @@ class Binding:
             raise ConfigError(
                 msg,
             )
-        shape: Callable[[Any, Any], R] = project if project is not None else (lambda row, _request: row)
+        shape: Callable[..., R] = project if project is not None else (lambda row, _request: row)
+        reply = self._meta_projection(shape, project, with_meta=with_meta, what=f'serve_latest({cls.__name__})')
         key_columns = _as_mapping(key)
         expanders = self._expanders(expand, key_columns, f'serve_latest({cls.__name__})')
 
@@ -583,10 +594,11 @@ class Binding:
             }
             if len(entity) != len(key_columns):
                 return missing(request) if missing is not None else None
-            row = await self._store.latest(stored_cls, **entity)
-            if row is None:
+            found = await self._store.latest_with_meta(stored_cls, **entity)
+            if found is None:
                 return missing(request) if missing is not None else None
-            return shape(row, request)
+            row, meta = found
+            return reply(row, request, meta)
 
         handle = cls.on_query(_handler, session=self._session, on_error=on_error)
         self._handles.append(handle)
@@ -629,6 +641,31 @@ class Binding:
                 msg,
             )
         return lambda row, _request: row
+
+    @staticmethod
+    def _meta_projection[R](
+        shape: Callable[..., R],
+        project: Callable[..., R] | None,
+        *,
+        with_meta: bool,
+        what: str,
+    ) -> Callable[[Any, Any, LatestMeta], R]:
+        """One ``(row, request, meta) -> reply`` function, whichever kind of hook was declared.
+
+        Latest reads always fetch the meta beside the row — it is a column of the row they
+        already select — so serving takes one path, and a two-argument hook simply does not
+        see it.
+
+        Raises:
+            ConfigError: If ``with_meta`` is set with no ``project`` — the identity projection
+                has nowhere to put the meta, so asking for it is a mistake worth saying.
+        """
+        if not with_meta:
+            return lambda row, request, _meta: shape(row, request)
+        if project is None:
+            msg = f'{what}: with_meta=True needs project=<row, request, meta -> reply>'
+            raise ConfigError(msg)
+        return project
 
     def _split_filters(
         self,

@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..dialect import DEFAULT_DIALECT, Dialect
 from ..errors import BackendError
+from ..latest import upsert_params, upsert_sql
 from ..log import get_logger
 
 if TYPE_CHECKING:
@@ -219,27 +220,19 @@ class SQLiteBackend:
         rows: Sequence[dict[str, Any]],
         key_columns: Sequence[str],
         compare_column: str,
+        *,
+        run_gap_s: float | None = None,
     ) -> None:
-        """Upsert rows into ``table`` newest-wins on ``compare_column``.
+        """Upsert rows into ``table`` newest-wins on ``compare_column`` (:mod:`stored.latest`).
 
-        ``INSERT … ON CONFLICT(<key>) DO UPDATE … WHERE excluded.<cmp> >= <cmp>``
-        keeps the row with the greatest ``compare_column`` per key, order-independent:
-        each row upserts as its own statement (``executemany``), so an older row can
+        Each row upserts as its own statement (``executemany``), so an older row can
         never overwrite a newer one — whatever the batch order or redelivery.
         """
         if not rows:
             return
         cols = list(rows[0].keys())
-        col_list = ', '.join(f'"{col}"' for col in cols)
-        placeholders = ', '.join('?' for _ in cols)
-        conflict = ', '.join(f'"{col}"' for col in key_columns)
-        assignments = ', '.join(f'"{col}"=excluded."{col}"' for col in cols if col not in key_columns)
-        sql = (
-            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '  # noqa: S608 (quoted identifiers)
-            f'ON CONFLICT({conflict}) DO UPDATE SET {assignments} '
-            f'WHERE excluded."{compare_column}" >= "{table}"."{compare_column}"'
-        )
-        params = [tuple(row.get(col) for col in cols) for row in rows]
+        sql = upsert_sql(table, cols, key_columns, compare_column, dialect=self.dialect, run_gap_s=run_gap_s)
+        params = [tuple(upsert_params(row, cols, compare_column, run_gap_s=run_gap_s)) for row in rows]
         try:
             self._conn.executemany(sql, params)
             self._conn.commit()

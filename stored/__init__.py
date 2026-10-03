@@ -26,17 +26,19 @@ from .errors import (
     StoredError,
     WriterError,
 )
+from .latest import LatestMeta
 from .store import Store
 
 if TYPE_CHECKING:
     from .zenoh import Chronicler
 
-__version__ = '0.3.2'
+__version__ = '0.3.3'
 
 __all__ = [
     'BackendError',
     'Chronicler',
     'ConfigError',
+    'LatestMeta',
     'QueryError',
     'RegistrationError',
     'SchemaError',

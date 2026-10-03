@@ -62,9 +62,9 @@ class Writer:
         self._flush_rows = flush_rows
         self._flush_secs = flush_secs
         self._buffers: dict[str, list[dict[str, Any]]] = {}
-        # history table -> (latest_table, key_columns, compare_column) for streams
-        # that maintain a latest-per-key projection off the same batch.
-        self._latest: dict[str, tuple[str, tuple[str, ...], str]] = {}
+        # history table -> (latest_table, key_columns, compare_column, run_gap_s) for
+        # streams that maintain a latest-per-key projection off the same batch.
+        self._latest: dict[str, tuple[str, tuple[str, ...], str, float | None]] = {}
         self._buffer_lock = threading.Lock()
         self._backend_lock = backend_lock if backend_lock is not None else threading.RLock()
         self._stop = threading.Event()
@@ -94,13 +94,15 @@ class Writer:
         latest_table: str,
         key_columns: tuple[str, ...],
         compare_column: str,
+        run_gap_s: float | None = None,
     ) -> None:
         """Maintain a latest-per-key projection of ``table`` into ``latest_table``.
 
         On every flush, each history batch is also upserted (newest-wins on
-        ``compare_column``) into ``latest_table``, keyed by ``key_columns``.
+        ``compare_column``) into ``latest_table``, keyed by ``key_columns`` — and, with
+        ``run_gap_s``, each entity's run start is kept beside it.
         """
-        self._latest[table] = (latest_table, key_columns, compare_column)
+        self._latest[table] = (latest_table, key_columns, compare_column, run_gap_s)
 
     def enqueue(self, table: str, row: dict[str, Any]) -> None:
         """Buffer ``row`` for ``table``, flushing if the row threshold is hit."""
@@ -128,8 +130,10 @@ class Writer:
                     self._backend.append_batch(table, rows)
                     latest = self._latest.get(table)
                     if latest is not None:
-                        latest_table, key_columns, compare_column = latest
-                        self._backend.upsert_latest(latest_table, rows, key_columns, compare_column)
+                        latest_table, key_columns, compare_column, run_gap_s = latest
+                        self._backend.upsert_latest(
+                            latest_table, rows, key_columns, compare_column, run_gap_s=run_gap_s
+                        )
                 except Exception:  # noqa: BLE001 — a writer thread must not die of one bad batch
                     _log.exception('flush of %d rows to %s failed (dropped)', len(rows), table)
 

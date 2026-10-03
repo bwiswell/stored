@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 
 import pytest
 import zeared
@@ -992,6 +993,116 @@ async def test_an_expander_on_a_field_that_filters_nothing_is_refused_at_bind_ti
             binding.serve_latest(
                 LastPosition, of=Position, key=('source', 'epc'), project=to_last_position, expand={'x': _spellings}
             )
+    finally:
+        binding.close()
+        await store.close()
+
+
+# -- with_meta: what the projection keeps beside the row ----------------------
+
+
+@zeared.zeared
+class SightingRequest(zeared.Zeared):
+    source: str = zeared.Str(default='')
+    epc: str = zeared.Str(default='')
+    limit: int = zeared.Int(default=0)
+    cursor: str = zeared.Str(default='')
+
+
+@zeared.zeared
+class Sighting(zeared.Message):
+    """A tag's newest position, with when its current run of sightings began."""
+
+    TOPIC = 'test/history/sighting'
+    SCHEMA = '1'
+    REQUEST = SightingRequest
+
+    source: str = zeared.Str(required=True)
+    epc: str = zeared.Str(required=True)
+    x: float = zeared.Float(default=0.0)
+    since: float = zeared.Float(default=0.0)  # 0 = the run began before runs were kept
+    cursor: str = zeared.Str(default='')
+
+
+def to_sighting(row: Position, _request: object, meta: stored.LatestMeta) -> Sighting:
+    since = meta.run_start.replace(tzinfo=datetime.UTC).timestamp() if meta.run_start else 0.0
+    return Sighting(source=row.source, epc=row.epc, x=row.x, since=since)
+
+
+def _run_store():
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    store.register(
+        Position, index=('source', 'epc'), time_field='observed_at', latest_key=('source', 'epc'), latest_run_gap='1h'
+    )
+    # E1: seen at 1000 and again at 1500 — one run. E2: seen at 1000, then not until 9000 — a new run.
+    for epc, at in [('E1', 1000.0), ('E2', 1000.0), ('E1', 1500.0), ('E2', 9000.0)]:
+        store.record(Position, Position(source='rtls', epc=epc, x=at, observed_at=at))
+    return store
+
+
+async def test_serve_latest_with_meta_hands_the_hook_the_run_start(session):
+    zeared.session = session
+    store, binding = _run_store(), None
+    try:
+        await store.flush()
+        binding = Binding(store, session=session)
+        binding.serve_latest(Sighting, of=Position, key=('source', 'epc'), project=to_sighting, with_meta=True)
+        await _settle()
+
+        e1 = await zeared.aquery_one(Sighting, request=SightingRequest(source='rtls', epc='E1'), timeout=5.0)
+        e2 = await zeared.aquery_one(Sighting, request=SightingRequest(source='rtls', epc='E2'), timeout=5.0)
+        assert e1 is not None
+        assert e2 is not None
+        assert (e1.x, e1.since) == (1500.0, 1000.0)  # newest row, run from its first sighting
+        assert (e2.x, e2.since) == (9000.0, 9000.0)  # the silence started a new run
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+@pytest.mark.parametrize('mode', ['collected', 'paged', 'streamed'])
+async def test_serve_snapshot_with_meta_pairs_every_row_with_its_run(session, mode):
+    zeared.session = session
+    store, binding = _run_store(), None
+    try:
+        await store.flush()
+        binding = Binding(store, session=session)
+        shape = {
+            'collected': {},
+            'paged': {'limit': 'limit', 'cursor': 'cursor'},
+            'streamed': {'stream': True},
+        }[mode]
+        binding.serve_snapshot(Sighting, of=Position, filters=('source',), project=to_sighting, with_meta=True, **shape)
+        await _settle()
+
+        request = SightingRequest(source='rtls', limit=1 if mode == 'paged' else 0)
+        rows = await zeared.aquery(Sighting, request=request, timeout=5.0)
+        if mode == 'paged':  # one entity per page: follow the cursor to the second
+            assert len(rows) == 1
+            assert rows[-1].cursor
+            rest = await zeared.aquery(
+                Sighting, request=SightingRequest(source='rtls', limit=1, cursor=rows[-1].cursor), timeout=5.0
+            )
+            rows = [*rows, *rest]
+        assert sorted((r.epc, r.since) for r in rows) == [('E1', 1000.0), ('E2', 9000.0)]
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_with_meta_needs_a_hook_to_hand_the_meta_to(session):
+    # A class that is its own reply projects by identity, which has nowhere to put the meta.
+    zeared.session = session
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    store.register(Event, index=('source',), time_field='raised_at', latest_key=('source',), latest_run_gap='1h')
+    binding = Binding(store, session=session)
+    try:
+        with pytest.raises(ConfigError, match='with_meta=True needs project'):
+            binding.serve_latest(Event, key=('source',), with_meta=True)
+        with pytest.raises(ConfigError, match='with_meta=True needs project'):
+            binding.serve_snapshot(Event, with_meta=True)
     finally:
         binding.close()
         await store.close()

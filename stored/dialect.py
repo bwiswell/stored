@@ -71,6 +71,21 @@ class Dialect:
         """
         return f'json_extract("{column}", {quote_path(path)})'
 
+    def seconds_between(self, later: str, earlier: str) -> str:
+        """An expression for ``later - earlier`` in seconds, both being timestamp expressions.
+
+        SQLite keeps a timestamp as ISO-8601 text, which only its date functions can do
+        arithmetic on; ``julianday`` keeps sub-second precision, where ``unixepoch`` would not.
+
+        Args:
+            later: A SQL expression for the later timestamp (a quoted column, say).
+            earlier: A SQL expression for the earlier one.
+
+        Returns:
+            A SQL expression yielding seconds as a real number.
+        """
+        return f'((julianday({later}) - julianday({earlier})) * 86400.0)'
+
 
 class DuckDBDialect(Dialect):
     """DuckDB's spelling: the same, except that JSON text needs its own extractor."""
@@ -85,6 +100,10 @@ class DuckDBDialect(Dialect):
         """
         function = 'json_extract_string' if text else 'json_extract'
         return f'{function}("{column}", {quote_path(path)})'
+
+    def seconds_between(self, later: str, earlier: str) -> str:
+        """As :meth:`Dialect.seconds_between`; DuckDB has native timestamps and ``epoch``."""
+        return f'(epoch({later}) - epoch({earlier}))'
 
 
 #: The baseline dialect, used when no backend supplies one.

@@ -55,13 +55,15 @@ Requires Python ≥ 3.14.
 import stored
 
 store = stored.Store('chronicle.db')
-store.register(Telemetry, retention='7d', index=('id',), latest_key=('id',))
+store.register(Telemetry, retention='7d', index=('id',), latest_key=('id',),
+               latest_run_gap='7d')  # optional: keep when each id's current run began
 # retention also takes seconds or a timedelta: 604800, timedelta(days=7)
 
 store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
 history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → list[Telemetry]
 newest  = store.latest(Telemetry, id=7)                  # → Telemetry | None, however old
 either  = store.latest(Telemetry, id=(7, 8))             # the newer of two keys for one thing
+row, meta = store.latest_with_meta(Telemetry, id=7)      # + meta.run_start, with latest_run_gap=…
 
 for row in store.iter(Telemetry, since='-30d'):          # streamed, uncapped
     ...                                                  # a page in memory at a time
