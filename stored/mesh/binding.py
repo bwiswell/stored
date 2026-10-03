@@ -13,7 +13,10 @@ particular contract, topic or category, so a binding serves any ``@zeared`` clas
 **The sentinel policy.** Request payloads commonly encode "not provided" as an
 empty string or a zero rather than ``None`` (a wire format without optionals).
 :data:`UNSET_FALSY` is that convention as a default; pass ``unset=(None,)`` for a
-strict one, or any tuple of values a given fleet treats as absent.
+strict one, or any tuple of values a given fleet treats as absent. A request whose
+fields disagree — an optional floor id where ``0`` is a real floor, beside a time
+bound where ``0`` is open — names its exceptions per field instead,
+``unset={'floor_id': (None,)}``, and every other field keeps the default.
 """
 
 from __future__ import annotations
@@ -111,8 +114,36 @@ def _as_targets(spec: Sequence[str] | Mapping[str, FilterTarget]) -> dict[str, F
     return {name: name for name in spec}
 
 
+#: A sentinel policy: one tuple for every request field, or ``{field: sentinels}`` for a request
+#: whose fields disagree — a floor id where ``0`` is a real floor, beside a time bound where ``0``
+#: is open. A field the mapping does not name keeps :data:`UNSET_FALSY`.
+type Unset = tuple[Any, ...] | Mapping[str, tuple[Any, ...]]
+
+#: A policy resolved for the handlers: a request field's sentinels.
+type _Sentinels = Callable[[str], tuple[Any, ...]]
+
+
+def _sentinels(unset: Unset, request_cls: type, what: str) -> _Sentinels:
+    """Resolve a sentinel policy once, at bind time, to a per-field lookup.
+
+    Raises:
+        ConfigError: If a per-field policy names a field the request does not declare. A
+            misspelt name would otherwise leave the real field on the default, silently.
+    """
+    if not isinstance(unset, Mapping):
+        everywhere = tuple(unset)
+        return lambda _field: everywhere
+    declared = {name for name, _key, _field in getattr(request_cls, '__seared_fields__', ())}
+    stray = sorted(set(unset) - declared)
+    if stray:
+        msg = f'{what}: unset names {stray}, which {request_cls.__name__} does not declare'
+        raise ConfigError(msg)
+    per_field = {field: tuple(values) for field, values in unset.items()}
+    return lambda field: per_field.get(field, UNSET_FALSY)
+
+
 def _present(value: Any, unset: tuple[Any, ...]) -> bool:
-    """Whether ``value`` counts as provided under the sentinel policy."""
+    """Whether ``value`` counts as provided under one field's sentinels."""
     return not any(value is sentinel or value == sentinel for sentinel in unset)
 
 
@@ -241,7 +272,7 @@ class Binding:
         expand: Mapping[str, Expander] | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
-        unset: tuple[Any, ...] = UNSET_FALSY,
+        unset: Unset = UNSET_FALSY,
         on_error: Callable[[Exception, bytes], None] | None = None,
     ) -> Any:
         """Serve ``cls``'s history as a time-range queryable driven by its ``REQUEST``.
@@ -293,7 +324,8 @@ class Binding:
                 list. No contract change — the same replies, produced lazily.
             chunk: Rows per page while streaming (the memory bound and thread-hop
                 size). Ignored unless ``stream``.
-            unset: Values treated as "not provided" (see :data:`UNSET_FALSY`).
+            unset: Values treated as "not provided" — one tuple for every field, or
+                ``{field: sentinels}`` per field, the rest keeping :data:`UNSET_FALSY`.
             on_error: Optional ``on_error(exc, raw)`` for the queryable.
 
         Returns:
@@ -309,6 +341,7 @@ class Binding:
         what = f'serve_range({cls.__name__})'
         self._require_registered(stored_cls, what)
         request_cls = self._require_request(cls, 'serve_range')
+        sentinels = _sentinels(unset, request_cls, what)
         shape = self._projection(cls, stored_cls, project, what)
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
         expanders = self._expanders(expand, _as_targets(filters), what)
@@ -316,7 +349,7 @@ class Binding:
 
         def _cap(request: Any) -> int | None:
             return _effective_limit(
-                self._bound(request, limit, unset),
+                self._bound(request, limit, sentinels),
                 default=default_limit,
                 maximum=max_limit,
                 streaming=stream,
@@ -327,19 +360,19 @@ class Binding:
             applied = {
                 column: self._value(request, field, expanders)
                 for field, column in columns.items()
-                if _present(getattr(request, field, None), unset)
+                if _present(getattr(request, field, None), sentinels(field))
             }
             where = {
                 path: self._value(request, field, expanders)
                 for field, path in paths.items()
-                if _present(getattr(request, field, None), unset)
+                if _present(getattr(request, field, None), sentinels(field))
             }
-            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset, expanders)
+            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, sentinels, expanders)
             applied.update(picked_columns)
             where.update(picked_paths)
             return {
-                'since': self._bound(request, since, unset),
-                'until': self._bound(request, until, unset),
+                'since': self._bound(request, since, sentinels),
+                'until': self._bound(request, until, sentinels),
                 'limit': _cap(request),
                 'where': where or None,
                 **applied,
@@ -353,7 +386,7 @@ class Binding:
             if paging is None:
                 rows = await self._store.query(stored_cls, **_read(request))
                 return [shape(row, request) for row in rows]
-            after = self._after(request, paging, unset)
+            after = self._after(request, paging, sentinels)
             rows, anchor = await self._store.query_page(stored_cls, after=after, **_read(request))
             return self._stamped([shape(row, request) for row in rows], paging, anchor)
 
@@ -387,7 +420,7 @@ class Binding:
         expand: Mapping[str, Expander] | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
-        unset: tuple[Any, ...] = UNSET_FALSY,
+        unset: Unset = UNSET_FALSY,
         on_error: Callable[[Exception, bytes], None] | None = None,
     ) -> Any:
         """Serve **current state**: the newest row of every matching entity.
@@ -426,7 +459,8 @@ class Binding:
                 :meth:`serve_range`.
             stream: Reply row-by-row from a paged walk instead of one list.
             chunk: Rows per page while streaming. Ignored unless ``stream``.
-            unset: Values treated as "not provided" (see :data:`UNSET_FALSY`).
+            unset: Values treated as "not provided" — one tuple for every field, or
+                ``{field: sentinels}`` per field, the rest keeping :data:`UNSET_FALSY`.
             on_error: Optional ``on_error(exc, raw)`` for the queryable.
 
         Returns:
@@ -446,6 +480,7 @@ class Binding:
                 msg,
             )
         request_cls = self._require_request(cls, 'serve_snapshot')
+        sentinels = _sentinels(unset, request_cls, what)
         reply = self._meta_projection(
             self._projection(cls, stored_cls, project, what), project, with_meta=with_meta, what=what
         )
@@ -455,7 +490,7 @@ class Binding:
 
         def _cap(request: Any) -> int | None:
             return _effective_limit(
-                self._bound(request, limit, unset),
+                self._bound(request, limit, sentinels),
                 default=default_limit,
                 maximum=max_limit,
                 streaming=stream,
@@ -465,19 +500,19 @@ class Binding:
             applied = {
                 column: self._value(request, field, expanders)
                 for field, column in columns.items()
-                if _present(getattr(request, field, None), unset)
+                if _present(getattr(request, field, None), sentinels(field))
             }
             where = {
                 path: self._value(request, field, expanders)
                 for field, path in paths.items()
-                if _present(getattr(request, field, None), unset)
+                if _present(getattr(request, field, None), sentinels(field))
             }
-            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset, expanders)
+            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, sentinels, expanders)
             applied.update(picked_columns)
             where.update(picked_paths)
             return {
-                'since': self._bound(request, since, unset),
-                'until': self._bound(request, until, unset),
+                'since': self._bound(request, since, sentinels),
+                'until': self._bound(request, until, sentinels),
                 'limit': _cap(request),
                 'where': where or None,
                 **applied,
@@ -491,7 +526,7 @@ class Binding:
             if paging is None:
                 entries = await self._store.query_latest_with_meta(stored_cls, **_read(request))
                 return [reply(row, request, meta) for row, meta in entries]
-            after = self._after(request, paging, unset)
+            after = self._after(request, paging, sentinels)
             entries, anchor = await self._store.query_latest_page_with_meta(stored_cls, after=after, **_read(request))
             return self._stamped([reply(row, request, meta) for row, meta in entries], paging, anchor)
 
@@ -518,7 +553,7 @@ class Binding:
         with_meta: bool = False,
         missing: Callable[[Any], R | None] | None = None,
         expand: Mapping[str, Expander] | None = None,
-        unset: tuple[Any, ...] = UNSET_FALSY,
+        unset: Unset = UNSET_FALSY,
         on_error: Callable[[Exception, bytes], None] | None = None,
     ) -> Any:
         """Serve "newest for this entity" from a latest-per-key projection.
@@ -546,7 +581,8 @@ class Binding:
                 looks up, computed per request. A collection answers the NEWEST across
                 every entity it names: one thing recorded under several keys (a tag
                 re-encoded to a second EPC) answers as the one it is.
-            unset: Values treated as "not provided" (see :data:`UNSET_FALSY`).
+            unset: Values treated as "not provided" — one tuple for every field, or
+                ``{field: sentinels}`` per field, the rest keeping :data:`UNSET_FALSY`.
             on_error: Optional ``on_error(exc, raw)`` for the queryable.
 
         Returns:
@@ -569,6 +605,7 @@ class Binding:
                 msg,
             )
         request_cls = self._require_request(cls, 'serve_latest')
+        sentinels = _sentinels(unset, request_cls, f'serve_latest({cls.__name__})')
         if project is None and stored_cls is not cls:
             msg = (
                 f'serve_latest({cls.__name__}, of={stored_cls.__name__}) needs project=<row, request -> reply>; '
@@ -590,7 +627,7 @@ class Binding:
             entity = {
                 column: self._value(request, field, expanders)
                 for field, column in key_columns.items()
-                if _present(getattr(request, field, None), unset)
+                if _present(getattr(request, field, None), sentinels(field))
             }
             if len(entity) != len(key_columns):
                 return missing(request) if missing is not None else None
@@ -726,7 +763,7 @@ class Binding:
         stored_cls: type[s.Seared],
         computed: dict[str, Callable[[Any], str]],
         request: Any,
-        unset: tuple[Any, ...],
+        sentinels: _Sentinels,
         expanders: Mapping[str, Expander],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Apply the computed targets for one request, sorted as columns and paths.
@@ -735,7 +772,7 @@ class Binding:
             stored_cls: The class whose stream declares the dimensions and paths.
             computed: ``{request field: target function}`` from :meth:`_split_filters`.
             request: The decoded request payload.
-            unset: Values treated as "not provided".
+            sentinels: A field's "not provided" values.
             expanders: ``{request field: value function}`` from :meth:`_expanders`.
 
         Returns:
@@ -750,7 +787,7 @@ class Binding:
         paths: dict[str, Any] = {}
         for field, pick in computed.items():
             value = getattr(request, field, None)
-            if not _present(value, unset):
+            if not _present(value, sentinels(field)):
                 continue
             target = pick(request)
             value = self._value(request, field, expanders)
@@ -833,14 +870,14 @@ class Binding:
         return cursor
 
     @classmethod
-    def _after(cls, request: Any, cursor: str, unset: tuple[Any, ...]) -> Any:
+    def _after(cls, request: Any, cursor: str, sentinels: _Sentinels) -> Any:
         """The anchor a request's cursor resumes after, or ``None`` for the first page.
 
         Raises:
             QueryError: If the cursor is not one this store produced (surfaces as an error
                 reply, never as a silently restarted first page).
         """
-        raw = cls._bound(request, cursor, unset)
+        raw = cls._bound(request, cursor, sentinels)
         return decode_anchor(raw) if raw else None
 
     @staticmethod
@@ -851,12 +888,12 @@ class Binding:
         return replies
 
     @staticmethod
-    def _bound(request: Any, field: str | None, unset: tuple[Any, ...]) -> Any:
+    def _bound(request: Any, field: str | None, sentinels: _Sentinels) -> Any:
         """Read one optional request field, or ``None`` when absent/unset."""
         if field is None:
             return None
         value = getattr(request, field, None)
-        return value if _present(value, unset) else None
+        return value if _present(value, sentinels(field)) else None
 
 
-__all__ = ['UNSET_FALSY', 'Binding']
+__all__ = ['UNSET_FALSY', 'Binding', 'Unset']

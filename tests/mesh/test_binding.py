@@ -1106,3 +1106,128 @@ async def test_with_meta_needs_a_hook_to_hand_the_meta_to(session):
     finally:
         binding.close()
         await store.close()
+
+
+# -- the sentinel policy, per field --------------------------------------------
+
+
+@zeared.zeared
+class StopRequest(zeared.Zeared):
+    """Mixed conventions, as a real request has them: each field spells "any" its own way."""
+
+    floor: int | None = zeared.Int(default=None)  # None = any floor; 0 is a floor like any other
+    tags: list[str] = zeared.Str(many=True, default_factory=list)  # empty = any tag
+    from_ts: float = zeared.Float(default=0.0)  # 0 = open
+    to_ts: float = zeared.Float(default=0.0)  # 0 = open
+    cursor: str = zeared.Str(default='')
+
+
+@zeared.zeared
+class Stop(zeared.Message):
+    TOPIC = 'test/history/stop'
+    SCHEMA = '1'
+    REQUEST = StopRequest
+
+    epc: str = zeared.Str(required=True)
+    floor: int = zeared.Int(default=0)
+    observed_at: float = zeared.Float(required=True)
+    cursor: str = zeared.Str(default='')
+
+
+#: The policy the request's own comments describe; every field it does not name keeps the default.
+_STOP_UNSET = {'floor': (None,), 'tags': (None, [])}
+
+
+def _stop_store():
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    store.register(Stop, index=('epc', 'floor'), time_field='observed_at', latest_key=('epc',))
+    for epc, floor, at in [('E1', 0, 1000.0), ('E2', 1, 1001.0), ('E3', 0, 1002.0)]:
+        store.record(Stop, Stop(epc=epc, floor=floor, observed_at=at))
+    return store
+
+
+@pytest.mark.parametrize(
+    ('request_', 'expected'),
+    [
+        (StopRequest(floor=0), ['E1', 'E3']),  # floor 0 filters; the open to_ts=0 still reads as open
+        (StopRequest(), ['E1', 'E2', 'E3']),  # no floor and no tags: everything
+        (StopRequest(tags=['E2', 'E3']), ['E2', 'E3']),
+        (StopRequest(floor=0, tags=['E2']), []),  # filters compose
+        (StopRequest(floor=1, from_ts=1000.5), ['E2']),  # the time bound keeps the default policy
+    ],
+)
+@pytest.mark.parametrize('serve', ['range', 'snapshot'])
+async def test_a_per_field_policy_keeps_zero_for_one_field_and_open_for_the_rest(session, serve, request_, expected):
+    zeared.session = session
+    store, binding = _stop_store(), None
+    try:
+        await store.flush()
+        binding = Binding(store, session=session)
+        declare = binding.serve_range if serve == 'range' else binding.serve_snapshot
+        declare(Stop, filters={'floor': 'floor', 'tags': 'epc'}, since='from_ts', until='to_ts', unset=_STOP_UNSET)
+        await _settle()
+
+        rows = await zeared.aquery(Stop, request=request_, timeout=5.0)
+        assert sorted(r.epc for r in rows) == expected
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_the_default_policy_reads_floor_zero_as_any_floor(session):
+    """Why the per-field form exists: one tuple cannot say "0 is open" and "0 is a floor" at once."""
+    zeared.session = session
+    store, binding = _stop_store(), None
+    try:
+        await store.flush()
+        binding = Binding(store, session=session)
+        binding.serve_range(Stop, filters={'floor': 'floor'}, since='from_ts', until='to_ts')
+        await _settle()
+
+        rows = await zeared.aquery(Stop, request=StopRequest(floor=0), timeout=5.0)
+        assert sorted(r.epc for r in rows) == ['E1', 'E2', 'E3']
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_a_per_field_policy_applies_to_a_latest_key(session):
+    zeared.session = session
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    store.register(Stop, index=('epc', 'floor'), time_field='observed_at', latest_key=('floor',))
+    store.record(Stop, Stop(epc='E1', floor=0, observed_at=1000.0))
+    binding = None
+    try:
+        await store.flush()
+        binding = Binding(store, session=session)
+        binding.serve_latest(Stop, key=('floor',), unset={'floor': (None,)})
+        await _settle()
+
+        found = await zeared.aquery_one(Stop, request=StopRequest(floor=0), timeout=5.0)
+        assert found is not None
+        assert found.epc == 'E1'
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+@pytest.mark.parametrize('serve', ['range', 'snapshot', 'latest'])
+async def test_a_per_field_policy_naming_no_request_field_is_refused(session, serve):
+    # A misspelt name would leave the real field on the default policy without a word.
+    zeared.session = session
+    store = _stop_store()
+    binding = Binding(store, session=session)
+    declare = {
+        'range': lambda: binding.serve_range(Stop, unset={'flor': (None,)}),
+        'snapshot': lambda: binding.serve_snapshot(Stop, unset={'flor': (None,)}),
+        'latest': lambda: binding.serve_latest(Stop, key=('epc',), unset={'flor': (None,)}),
+    }[serve]
+    try:
+        with pytest.raises(ConfigError, match=r"unset names \['flor'\], which StopRequest does not declare"):
+            declare()
+    finally:
+        binding.close()
+        await store.close()
