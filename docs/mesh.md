@@ -165,6 +165,31 @@ knowing before reaching for this:
 Prefer a fixed target wherever the dimension is known at declaration time; it fails at
 startup instead.
 
+### When one thing is recorded under several keys
+
+A computed *target* picks which dimension to filter; `expand` computes the *value*. It
+maps a filter (or key) field to `fn(request)`, and what the function returns is what that
+field matches — a single value, or a collection to match **any** of:
+
+```python
+# A tag whose EPC is rewritten at a sale is one item under two spellings.
+binding.serve_range(AlertRecord, filters=('source', 'epc'), expand={'epc': spellings})
+binding.serve_latest(LastKnownLocation, of=Location, key=('source', 'epc'),
+                     project=to_last_known, expand={'epc': spellings})
+```
+
+- A collection filters as `IN (…)`, and an **empty** one matches nothing — "any of none"
+  is never read as "no filter".
+- `serve_latest` with a collection answers the **newest** row across every key it names,
+  so either spelling of the tag answers with where the item was last seen.
+- The expander runs only when the field is present in the request. An absent field stays
+  unfiltered, exactly as without `expand`.
+- An `expand` entry for a field that is not one of the declaration's filters (or key
+  fields) is a `ConfigError` at bind time: it would never run.
+
+The keyset cursor is unaffected — it walks the sort order, not the filter — so an
+expanded range pages exactly like any other.
+
 ### `serve_latest(cls, of=…, project=…, missing=…)`
 
 `cls` is the **reply** contract; `of` is the class actually stored. When they

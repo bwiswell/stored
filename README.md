@@ -61,6 +61,7 @@ store.register(Telemetry, retention='7d', index=('id',), latest_key=('id',))
 store.record(Telemetry, Telemetry(id=7, x=1.5))          # buffered write
 history = store.query(Telemetry, id=7, since='-1h', limit=5000)   # → list[Telemetry]
 newest  = store.latest(Telemetry, id=7)                  # → Telemetry | None, however old
+either  = store.latest(Telemetry, id=(7, 8))             # the newer of two keys for one thing
 
 for row in store.iter(Telemetry, since='-30d'):          # streamed, uncapped
     ...                                                  # a page in memory at a time
@@ -141,6 +142,8 @@ binding.serve_range(Event, filters=('source',), stream=True)   # reply row by ro
 binding.serve_range(Event, filters=('source',), limit='limit', cursor='cursor')  # paged: the last reply of a full page carries the next cursor
 
 binding.serve_snapshot(Placed, filters={'zone': 'zones.department'})  # current state, by zone
+binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),  # one thing under several keys:
+                     project=to_last_position, expand={'epc': spellings})  # the newest of them
 ```
 
 Recorded history can also go back **onto** the mesh, where ordinary subscribers

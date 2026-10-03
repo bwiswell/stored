@@ -687,3 +687,48 @@ def test_query_latest_page_walks_current_state(tmp_path):
         assert seen == [(0, 'n0'), (2, 'n2'), (3, 'n3'), (4, 'n4'), (1, 'again')]  # by last-seen
     finally:
         store.close()
+
+
+# -- membership: one thing recorded under several keys ------------------------
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_a_set_valued_filter_matches_any_member(tmp_path, db):
+    store = Store(str(tmp_path / db), flush_secs=0)
+    try:
+        store.register(Obs, index=('id',), time_field='observed_at')
+        for i in range(4):
+            store.record(Obs, Obs(id=i, observed_at=1000.0 + i))
+        store.flush()
+        assert sorted(r.id for r in store.query(Obs, id=[1, 3])) == [1, 3]
+        assert store.query(Obs, id=[]) == []
+    finally:
+        store.close()
+
+
+def test_a_set_valued_path_filter_matches_any_member(tmp_path):
+    store = _zoned(tmp_path)
+    try:
+        rows = store.query_latest(Zoned, where={'zones.department': [6, 7]})
+        assert [r.id for r in rows] == [1, 3]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_latest_across_several_keys_is_the_newest_of_them(tmp_path, db):
+    """One thing recorded under two keys — a tag re-encoded to a second EPC — answers as one."""
+    store = Store(str(tmp_path / db), flush_secs=0)
+    try:
+        store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+        store.record(Obs, Obs(id=1, observed_at=1000.0, label='before'))
+        store.record(Obs, Obs(id=2, observed_at=2000.0, label='after'))
+        store.record(Obs, Obs(id=3, observed_at=3000.0, label='unrelated'))
+        store.flush()
+
+        assert store.latest(Obs, id=(1, 2)).label == 'after'
+        assert store.latest(Obs, id=[2, 1]).label == 'after'  # member order is not precedence
+        assert store.latest(Obs, id=(1, 999)).label == 'before'  # a member with nothing is no obstacle
+        assert store.latest(Obs, id=()) is None
+    finally:
+        store.close()

@@ -17,7 +17,7 @@ from . import schema
 from ._time import Duration, duration_text
 from .errors import ConfigError, QueryError
 from .log import get_logger
-from .query import DEFAULT_CHUNK, Anchor, TimeBound, Window, parse_window, plan
+from .query import DEFAULT_CHUNK, Anchor, TimeBound, Window, equality_clause, is_members, parse_window, plan
 from .registry import Stream, StreamRegistry
 from .row import Meta, build_row, rehydrate
 from .ttl import Reaper
@@ -613,6 +613,11 @@ class Store:
         history expiry — a tag's last-known position, a device's last state.
         Flushes pending writes first (read-your-writes).
 
+        A key field may name a **set** of values (a list, tuple or set) instead of one:
+        the answer is then the newest across every entity the key matches — for one
+        thing that is recorded under more than one key, such as a tag re-encoded to a
+        second EPC. An empty set matches nothing.
+
         Args:
             cls: A registered class with a latest projection.
             **key: The full logical key (every ``latest_key`` field, exactly).
@@ -630,9 +635,21 @@ class Store:
             raise QueryError(
                 msg,
             )
-        where = ' AND '.join(f'"{col}" = ?' for col in stream.latest_key)
-        sql = f'SELECT * FROM "{stream.latest_table}" WHERE {where} LIMIT 1'  # noqa: S608 (quoted identifiers)
-        params = [key[col] for col in stream.latest_key]
+        clauses: list[str] = []
+        params: list[Any] = []
+        for col in stream.latest_key:
+            clause, values = equality_clause(f'"{col}"', key[col])
+            clauses.append(clause)
+            params.extend(values)
+        # One exact key holds one row; a set of them may hold several, and "latest" is the
+        # newest of those — in the same order every read here sorts by.
+        time_col = stream.time_column
+        order = (
+            f' ORDER BY "{time_col}" DESC, "_ts_hlc" DESC, "_key_expr" DESC'
+            if any(is_members(key[col]) for col in stream.latest_key)
+            else ''
+        )
+        sql = f'SELECT * FROM "{stream.latest_table}" WHERE {" AND ".join(clauses)}{order} LIMIT 1'  # noqa: S608 (quoted identifiers)
         self._writer.flush()
         with self._lock:
             rows = self._backend.select(sql, params)
