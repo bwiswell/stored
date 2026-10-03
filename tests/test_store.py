@@ -4,7 +4,7 @@ import pytest
 import seared as s
 
 from stored import Store
-from stored.errors import ConfigError, QueryError
+from stored.errors import ConfigError, QueryError, RegistrationError
 
 
 @s.seared
@@ -730,5 +730,157 @@ def test_latest_across_several_keys_is_the_newest_of_them(tmp_path, db):
         assert store.latest(Obs, id=[2, 1]).label == 'after'  # member order is not precedence
         assert store.latest(Obs, id=(1, 999)).label == 'before'  # a member with nothing is no obstacle
         assert store.latest(Obs, id=()) is None
+    finally:
+        store.close()
+
+
+# -- runs: when an entity's current run of records began -----------------------
+
+
+def _run_store(tmp_path, db, gap='1h'):
+    store = Store(str(tmp_path / db), flush_secs=0)
+    store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',), latest_run_gap=gap)
+    return store
+
+
+def _utc(seconds):
+    return datetime.datetime.fromtimestamp(seconds, datetime.UTC).replace(tzinfo=None)
+
+
+def _run_start(store, entity=1):
+    found = store.latest_with_meta(Obs, id=entity)
+    assert found is not None
+    return found[1].run_start
+
+
+def test_a_run_gap_needs_an_entity_and_a_positive_length(tmp_path):
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        with pytest.raises(RegistrationError, match='needs a latest_key'):
+            store.register(Obs, time_field='observed_at', latest_run_gap='1h')
+        with pytest.raises(RegistrationError, match='must be positive'):
+            store.register(Obs, time_field='observed_at', latest_key=('id',), latest_run_gap=0)
+        with pytest.raises(ConfigError, match='invalid duration'):
+            store.register(Obs, time_field='observed_at', latest_key=('id',), latest_run_gap='soon')
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_a_run_starts_with_the_first_record_and_holds_within_the_gap(tmp_path, db):
+    store = _run_store(tmp_path, db)
+    try:
+        store.record(Obs, Obs(id=1, observed_at=1000.0))
+        store.flush()
+        assert _run_start(store) == _utc(1000.0)
+
+        store.record(Obs, Obs(id=1, observed_at=1000.0 + 3500))  # 58 min later: the same run
+        store.flush()
+        assert _run_start(store) == _utc(1000.0)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_a_silence_longer_than_the_gap_starts_a_new_run(tmp_path, db):
+    store = _run_store(tmp_path, db)
+    try:
+        store.record(Obs, Obs(id=1, observed_at=1000.0))
+        store.flush()
+        store.record(Obs, Obs(id=1, observed_at=1000.0 + 3601))  # just over the hour
+        store.flush()
+        assert _run_start(store) == _utc(4601.0)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_a_late_record_extends_a_run_backwards_but_never_resets_it(tmp_path, db):
+    store = _run_store(tmp_path, db)
+    try:
+        store.record(Obs, Obs(id=1, observed_at=10_000.0, label='newest'))
+        store.flush()
+        # A redelivered record from 10 minutes earlier: contiguous, so the run began then.
+        store.record(Obs, Obs(id=1, observed_at=9_400.0, label='late'))
+        store.flush()
+        assert _run_start(store) == _utc(9_400.0)
+        # One from long before: it says nothing about the silence since, so it changes nothing.
+        store.record(Obs, Obs(id=1, observed_at=1_000.0, label='ancient'))
+        store.flush()
+        assert _run_start(store) == _utc(9_400.0)
+        # And newest-wins still holds for the row itself.
+        assert store.latest(Obs, id=1).label == 'newest'
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_runs_are_per_entity(tmp_path, db):
+    store = _run_store(tmp_path, db)
+    try:
+        store.record(Obs, Obs(id=1, observed_at=1000.0))
+        store.record(Obs, Obs(id=2, observed_at=5000.0))
+        store.flush()
+        assert (_run_start(store, 1), _run_start(store, 2)) == (_utc(1000.0), _utc(5000.0))
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_a_row_from_before_runs_were_kept_reads_unknown_until_a_run_starts(tmp_path, db):
+    path = str(tmp_path / db)
+    store = Store(path, flush_secs=0)
+    store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+    store.record(Obs, Obs(id=1, observed_at=1000.0))
+    store.close()
+
+    store = Store(path, flush_secs=0)  # reopened, now keeping runs: the column is added
+    store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',), latest_run_gap='1h')
+    try:
+        assert _run_start(store) is None  # began before anyone was counting
+        store.record(Obs, Obs(id=1, observed_at=2000.0))
+        store.flush()
+        assert _run_start(store) is None  # still that run
+        store.record(Obs, Obs(id=1, observed_at=9000.0))
+        store.flush()
+        assert _run_start(store) == _utc(9000.0)  # a run that is known
+    finally:
+        store.close()
+
+
+def test_a_stream_keeping_no_run_reads_none_and_the_plain_reads_are_unchanged(tmp_path):
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
+    try:
+        store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+        store.record(Obs, Obs(id=1, observed_at=1000.0, label='only'))
+        store.flush()
+        found = store.latest_with_meta(Obs, id=1)
+        assert found is not None
+        row, meta = found
+        assert (row.label, meta.run_start) == ('only', None)
+        assert store.latest_with_meta(Obs, id=99) is None
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
+def test_every_latest_read_has_a_with_meta_twin_returning_the_same_rows(tmp_path, db):
+    store = _run_store(tmp_path, db)
+    try:
+        for i, at in enumerate([1000.0, 2000.0, 3000.0]):
+            store.record(Obs, Obs(id=i, observed_at=at))
+        store.flush()
+        plain = [r.id for r in store.query_latest(Obs)]
+        paired = store.query_latest_with_meta(Obs)
+        assert [r.id for r, _ in paired] == plain
+        assert [m.run_start for _, m in paired] == [_utc(1000.0), _utc(2000.0), _utc(3000.0)]
+
+        page, anchor = store.query_latest_page_with_meta(Obs, limit=2)
+        assert [r.id for r, _ in page] == plain[:2]
+        rest, _ = store.query_latest_page_with_meta(Obs, limit=2, after=anchor)
+        assert [r.id for r, _ in rest] == plain[2:]
+
+        walked = list(store.iter_latest_with_meta(Obs, chunk=1))
+        assert [(r.id, m.run_start) for r, m in walked] == [(r.id, m.run_start) for r, m in paired]
     finally:
         store.close()

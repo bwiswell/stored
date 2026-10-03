@@ -13,6 +13,7 @@ import duckdb
 
 from ..dialect import Dialect, DuckDBDialect
 from ..errors import BackendError
+from ..latest import upsert_params, upsert_sql
 from ..log import get_logger
 
 if TYPE_CHECKING:
@@ -163,28 +164,21 @@ class DuckDBBackend:
         rows: Sequence[dict[str, Any]],
         key_columns: Sequence[str],
         compare_column: str,
+        *,
+        run_gap_s: float | None = None,
     ) -> None:
-        """Upsert rows into ``table`` newest-wins on ``compare_column``.
+        """Upsert rows into ``table`` newest-wins on ``compare_column`` (:mod:`stored.latest`).
 
-        ``INSERT … ON CONFLICT(<key>) DO UPDATE … WHERE excluded.<cmp> >= <cmp>``.
         One ``execute`` per row (order-independent newest-wins — an older row can
         never overwrite a newer one) against the ``key_columns`` primary key.
         """
         if not rows:
             return
         cols = list(rows[0].keys())
-        col_list = ', '.join(f'"{col}"' for col in cols)
-        placeholders = ', '.join(['?'] * len(cols))
-        conflict = ', '.join(f'"{col}"' for col in key_columns)
-        assignments = ', '.join(f'"{col}" = excluded."{col}"' for col in cols if col not in key_columns)
-        sql = (
-            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '  # noqa: S608 (identifiers are quoted; values are bound)
-            f'ON CONFLICT ({conflict}) DO UPDATE SET {assignments} '
-            f'WHERE excluded."{compare_column}" >= "{table}"."{compare_column}"'
-        )
+        sql = upsert_sql(table, cols, key_columns, compare_column, dialect=self.dialect, run_gap_s=run_gap_s)
         try:
             for row in rows:
-                self._conn.execute(sql, [row.get(col) for col in cols])
+                self._conn.execute(sql, upsert_params(row, cols, compare_column, run_gap_s=run_gap_s))
         except duckdb.Error as exc:
             msg = f'upsert_latest({table!r}) failed: {exc}'
             raise BackendError(msg) from exc

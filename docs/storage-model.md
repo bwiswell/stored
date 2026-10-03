@@ -106,6 +106,20 @@ last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | Non
 - **Filters take sets too.** Any column or path filter on `query` / `query_latest` / `iter`
   accepts a collection and matches any member (`IN`); an empty collection matches
   nothing. A string is always one value.
+- **Runs, optionally (`latest_run_gap`).** Register with a gap (`'7d'`, seconds, or a
+  `timedelta`) and the projection also keeps each entity's **run start**: when its current
+  run of records began, where a silence longer than the gap starts a new run. It is one more
+  column (`_run_start`) in the same upsert, so it costs no extra write.
+  - A newer record keeps the run start, or resets it to its own time after a silence longer
+    than the gap.
+  - An older record (redelivered, or a late batch) can only extend the run backwards, when
+    it lands within the gap of it. It never resets a run.
+  - Rows recorded before the column existed read `None`, meaning the run began before
+    anyone was counting, until a gap is crossed.
+
+  Read it with the `*_with_meta` twins of the latest reads (`latest_with_meta`,
+  `query_latest_with_meta`, `query_latest_page_with_meta`, `iter_latest_with_meta`). Each
+  returns `(row, LatestMeta)`, and `LatestMeta.run_start` is naive UTC or `None`.
 
 This is `stored`'s answer to a durable "last-known" query without retaining one mesh
 key per entity — the historian pattern behind e.g. a location store's

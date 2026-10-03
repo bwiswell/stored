@@ -153,6 +153,9 @@ def index_specs(
 #: otherwise). A stream keys retention/queries off whichever its ``time_column`` names.
 ISSUED_AT: str = '_issued_at'
 EVENT_AT: str = '_event_at'
+#: The latest projection's run-start column — when an entity's current run of records began.
+#: Only a stream registered with a ``latest_run_gap`` has it; it is never part of a payload.
+RUN_START: str = '_run_start'
 
 #: Seared field kinds a ``time_field`` may name — an absolute instant only.
 TIME_FIELD_KINDS: frozenset[str] = frozenset({'Int', 'Float', 'DateTime', 'Date'})
@@ -219,6 +222,7 @@ __all__ = [
     'ISSUED_AT',
     'META_COLUMNS',
     'PRIMARY_KEY',
+    'RUN_START',
     'SCALAR_TYPES',
     'TIME_FIELD_KINDS',
     'column_type',

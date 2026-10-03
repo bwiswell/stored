@@ -199,6 +199,25 @@ contract. When one class does double duty as row *and* reply, omit `of` and
 `project`: the projection is the identity. `missing(request)` answers when nothing
 is stored for the key; omit it to reply nothing at all.
 
+### `with_meta=True` — what the projection keeps beside the row
+
+`serve_latest` and `serve_snapshot` take `with_meta=True`, and then call
+`project(row, request, meta)` with the `LatestMeta` the projection keeps beside each row.
+That is a stream's run start, when it was registered with `latest_run_gap`. It is how a reply
+carries a fact that is not in any recorded message:
+
+```python
+binding.serve_snapshot(
+    LatestLocation, of=Location, filters={'zone': zone_path},
+    project=lambda row, request, meta: to_latest(row, seen_since=meta.run_start),
+    with_meta=True,
+)
+```
+
+The meta is read in the same `SELECT` as the row, so asking for it costs nothing. A
+two-argument hook simply never sees it. `with_meta` without a `project` is a `ConfigError`:
+the identity projection has nowhere to put it.
+
 ## `Replayer` — history as ordinary traffic
 
 A queryable answers one asker. A **replay** re-publishes what was recorded, so any
