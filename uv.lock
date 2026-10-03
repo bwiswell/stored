@@ -247,12 +247,12 @@ wheels = [
 
 [[package]]
 name = "seared"
-version = "0.3.1"
-source = { git = "https://github.com/bwiswell/seared#164f358947ff6e40f3775d81864787f362fdbf7b" }
+version = "0.3.2"
+source = { git = "https://github.com/bwiswell/seared#c3ea01ffc3f188141c46fcd9ba2b95e705bd4748" }
 
 [[package]]
 name = "stored"
-version = "0.3.3"
+version = "0.3.4"
 source = { editable = "." }
 dependencies = [
     { name = "seared" },
@@ -346,8 +346,8 @@ wheels = [
 
 [[package]]
 name = "zeared"
-version = "0.3.6"
-source = { git = "https://github.com/bwiswell/zeared#4f2119bd2c2689302150294f8e01497bfce97388" }
+version = "0.3.7"
+source = { git = "https://github.com/bwiswell/zeared#2b4107e24ad29c0e344e96a777249828f123738d" }
 dependencies = [
     { name = "eclipse-zenoh" },
     { name = "msgpack" },

@@ -294,6 +294,25 @@ HistoryRequest()                     # filters on nothing: the whole history
 Pass `unset=(None,)` for a strict convention where `''` is a real value to match,
 or any tuple a given fleet treats as absent.
 
+When a request's fields disagree, name the exceptions per field. A mapping names
+only the fields that differ; every other field keeps `UNSET_FALSY`:
+
+```python
+binding.serve_snapshot(
+    LatestPosition,
+    of=Position,
+    filters={'floor_id': 'floor_id', 'tags': 'epc'},
+    since='from_ts',                  # 0 = open: the default policy
+    unset={
+        'floor_id': (None,),          # None = any floor; 0 is a floor like any other
+        'tags': (None, []),           # an empty list asks for every tag, not for none
+    },
+)
+```
+
+A name the request does not declare is refused when the binding is declared — a
+misspelt one would otherwise leave the real field on the default.
+
 ## What stays out
 
 Presence, liveliness, retained status/settings, watchdogs and cold-start config
