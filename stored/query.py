@@ -154,16 +154,42 @@ def parse_window(
     return Window(start=start, end=end, limit=resolved, ascending=order.lower() != 'desc')
 
 
+def is_members(value: Any) -> bool:
+    """Whether a filter value names a SET of alternatives rather than one value to equal.
+
+    A list, tuple, set or frozenset filters by membership. Strings and bytes are single
+    values however iterable they are, and no indexed dimension holds a collection, so the
+    spelling is unambiguous.
+    """
+    return isinstance(value, (list, tuple, set, frozenset))
+
+
+def equality_clause(operand: str, value: Any) -> tuple[str, list[Any]]:
+    """``operand = ?`` for one value, ``operand IN (?, …)`` for a set of them.
+
+    An EMPTY set matches nothing — the honest reading of "any of none" — rather than
+    being dropped, which would turn a filter into no filter at all. ``IN ()`` is not
+    portable SQL, so it is spelled as a false predicate.
+    """
+    if not is_members(value):
+        return f'{operand} = ?', [value]
+    members = list(value)
+    if not members:
+        return '1 = 0', []
+    return f'{operand} IN ({", ".join("?" for _ in members)})', members
+
+
 def _equality_clauses(
     stream: Stream,
     filters: dict[str, Any] | None,
     where: dict[str, Any] | None,
     dialect: Dialect,
-) -> list[tuple[str, Any]]:
+) -> list[tuple[str, list[Any]]]:
     """Build the equality predicates: indexed columns, then declared JSON paths.
 
     Both are allow-listed against what the stream declared, so a name that reaches here
-    unrecognized is a caller error rather than an unfiltered read.
+    unrecognized is a caller error rather than an unfiltered read. A value that is a
+    collection filters by membership (see :func:`is_members`).
 
     Args:
         stream: The stream being queried.
@@ -172,12 +198,12 @@ def _equality_clauses(
         dialect: How this engine spells a JSON extraction.
 
     Returns:
-        ``(sql fragment, bound value)`` pairs, in the order they should be applied.
+        ``(sql fragment, bound values)`` pairs, in the order they should be applied.
 
     Raises:
         QueryError: If a filter names a non-indexed field, or a path is undeclared.
     """
-    built: list[tuple[str, Any]] = []
+    built: list[tuple[str, list[Any]]] = []
     for name, value in (filters or {}).items():
         if name not in set(stream.index):
             msg = (
@@ -185,7 +211,7 @@ def _equality_clauses(
                 f'{stream.cls.__name__} (indexed: {sorted(stream.index)})'
             )
             raise QueryError(msg)
-        built.append((f'"{name}" = ?', value))
+        built.append(equality_clause(f'"{name}"', value))
     for path, value in (where or {}).items():
         wire = stream.json_paths.get(path)
         if wire is None:
@@ -195,8 +221,10 @@ def _equality_clauses(
             )
             raise QueryError(msg)
         # The extractor depends on the value's type: DuckDB's json_extract returns
-        # JSON, which will not compare against a bound string.
-        built.append((f'{dialect.json_value("_payload", wire, text=isinstance(value, str))} = ?', value))
+        # JSON, which will not compare against a bound string. A set of members is
+        # read by its first member's type, so a set must not mix strings and numbers.
+        sample = next(iter(value), None) if is_members(value) else value
+        built.append(equality_clause(dialect.json_value('_payload', wire, text=isinstance(sample, str)), value))
     return built
 
 
@@ -220,10 +248,10 @@ def plan(
             (``''`` matches everything). A ``*`` triggers a ``GLOB`` match.
         window: The resolved time window.
         filters: Allow-listed field equality filters (must be in
-            ``stream.index``).
+            ``stream.index``). A collection value filters by membership.
         where: Allow-listed **path** equality filters (must be in
             ``stream.json_paths``) — equality on a key inside a ``Dict`` field,
-            read out of ``_payload``.
+            read out of ``_payload``. A collection value filters by membership.
         after: Resume strictly after this :data:`Anchor` — the keyset predicate
             behind ``Store.iter``'s paging. ``None`` starts at the beginning.
         skip_null_time: Exclude rows whose temporal axis is ``NULL`` (a nullable
@@ -264,9 +292,9 @@ def plan(
         comparison = '>' if window.ascending else '<'
         clauses.append(f'("{time_col}", "_ts_hlc", "_key_expr") {comparison} (?, ?, ?)')
         params.extend(after)
-    for clause_sql, value in _equality_clauses(stream, filters, where, dialect):
+    for clause_sql, values in _equality_clauses(stream, filters, where, dialect):
         clauses.append(clause_sql)
-        params.append(value)
+        params.extend(values)
 
     clause = f' WHERE {" AND ".join(clauses)}' if clauses else ''
     direction = 'ASC' if window.ascending else 'DESC'
@@ -287,6 +315,8 @@ __all__ = [
     'Window',
     'decode_anchor',
     'encode_anchor',
+    'equality_clause',
+    'is_members',
     'parse_window',
     'plan',
 ]

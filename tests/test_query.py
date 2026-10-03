@@ -219,3 +219,23 @@ def test_an_anchor_round_trips_through_an_opaque_cursor():
 def test_a_cursor_this_module_did_not_make_is_a_query_error(bad):
     with pytest.raises(QueryError):
         query.decode_anchor(bad)
+
+
+def test_plan_filters_by_membership_when_given_a_set():
+    sql, params = query.plan(_stream(), '', query.parse_window(), {'id': (3, 4)})
+    assert '"id" IN (?, ?)' in sql
+    assert params[-2:] == [3, 4]
+
+
+def test_plan_matches_nothing_for_an_empty_set_rather_than_dropping_the_filter():
+    # Dropping it would turn "any of none" into "everything".
+    sql, params = query.plan(_stream(), '', query.parse_window(), {'id': ()})
+    assert '1 = 0' in sql
+    assert params == []
+
+
+def test_plan_keeps_a_string_a_single_value():
+    # A string is iterable, but it is one value to equal, never a set of characters.
+    assert not query.is_members('E1')
+    for members in (['E1'], ('E1',), {'E1'}, frozenset()):
+        assert query.is_members(members)

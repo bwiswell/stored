@@ -46,6 +46,11 @@ UNSET_FALSY: tuple[Any, ...] = ('', 0, 0.0, None)
 #: layer to look inside.
 type FilterTarget = str | Callable[[Any], str]
 
+#: What a filtered field's VALUE may be computed by: ``(request) -> value``, or a set of
+#: values to match any of — for one thing recorded under more than one key, such as a tag
+#: re-encoded to a second EPC. Applied only when the field is present in the request.
+type Expander = Callable[[Any], Any]
+
 
 def _effective_limit(
     requested: int | None,
@@ -232,6 +237,7 @@ class Binding:
         default_limit: int | None = None,
         max_limit: int | None = None,
         cursor: str | None = None,
+        expand: Mapping[str, Expander] | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
         unset: tuple[Any, ...] = UNSET_FALSY,
@@ -278,6 +284,10 @@ class Binding:
                 queryable has no envelope, so the last row is where a caller reads it.
                 The reply class must declare the field; needs a collected reply
                 (``stream=False``), since a streamed reply has no last row to stamp.
+            expand: ``{filter field: fn(request) -> value | values}`` — what a present
+                filter field matches, computed per request instead of read as-is. A
+                collection matches any of its members, so one thing recorded under
+                several keys answers as one. Each key must be one of ``filters``.
             stream: Reply row-by-row from a paged walk instead of one materialized
                 list. No contract change — the same replies, produced lazily.
             chunk: Rows per page while streaming (the memory bound and thread-hop
@@ -290,9 +300,9 @@ class Binding:
 
         Raises:
             ConfigError: If the stored class is not registered, ``cls`` declares no
-                ``REQUEST``, the reply differs from the row without a ``project``, or
+                ``REQUEST``, the reply differs from the row without a ``project``,
                 ``cursor`` names a field the request or reply lacks (or is combined
-                with ``stream``).
+                with ``stream``), or ``expand`` names a field that is not a filter.
         """
         stored_cls: type[s.Seared] = of or cls
         what = f'serve_range({cls.__name__})'
@@ -300,6 +310,7 @@ class Binding:
         request_cls = self._require_request(cls, 'serve_range')
         shape = self._projection(cls, stored_cls, project, what)
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
+        expanders = self._expanders(expand, _as_targets(filters), what)
         paging = self._paging(cls, request_cls, cursor, stream=stream, what=what)
 
         def _cap(request: Any) -> int | None:
@@ -313,16 +324,16 @@ class Binding:
         def _read(request: Any) -> dict[str, Any]:
             """The request, read as store keywords — identical for both reply shapes."""
             applied = {
-                column: getattr(request, field)
+                column: self._value(request, field, expanders)
                 for field, column in columns.items()
                 if _present(getattr(request, field, None), unset)
             }
             where = {
-                path: getattr(request, field)
+                path: self._value(request, field, expanders)
                 for field, path in paths.items()
                 if _present(getattr(request, field, None), unset)
             }
-            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset)
+            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset, expanders)
             applied.update(picked_columns)
             where.update(picked_paths)
             return {
@@ -371,6 +382,7 @@ class Binding:
         max_limit: int | None = None,
         cursor: str | None = None,
         project: Callable[[Any, Any], R] | None = None,
+        expand: Mapping[str, Expander] | None = None,
         stream: bool = False,
         chunk: int = DEFAULT_CHUNK,
         unset: tuple[Any, ...] = UNSET_FALSY,
@@ -405,6 +417,8 @@ class Binding:
                 :meth:`serve_range`; a population is exactly what wants paging.
             project: ``(row, request) -> reply``; required when ``of`` differs from
                 ``cls``.
+            expand: ``{filter field: fn(request) -> value | values}`` — see
+                :meth:`serve_range`.
             stream: Reply row-by-row from a paged walk instead of one list.
             chunk: Rows per page while streaming. Ignored unless ``stream``.
             unset: Values treated as "not provided" (see :data:`UNSET_FALSY`).
@@ -415,7 +429,8 @@ class Binding:
 
         Raises:
             ConfigError: If the stored class is unregistered, keeps no latest
-                projection, declares no ``REQUEST``, or needs a ``project`` hook.
+                projection, declares no ``REQUEST``, needs a ``project`` hook, or
+                ``expand`` names a field that is not a filter.
         """
         stored_cls: type[s.Seared] = of or cls
         what = f'serve_snapshot({cls.__name__})'
@@ -428,6 +443,7 @@ class Binding:
         request_cls = self._require_request(cls, 'serve_snapshot')
         shape = self._projection(cls, stored_cls, project, what)
         columns, paths, computed = self._split_filters(stored_cls, filters, what)
+        expanders = self._expanders(expand, _as_targets(filters), what)
         paging = self._paging(cls, request_cls, cursor, stream=stream, what=what)
 
         def _cap(request: Any) -> int | None:
@@ -440,16 +456,16 @@ class Binding:
 
         def _read(request: Any) -> dict[str, Any]:
             applied = {
-                column: getattr(request, field)
+                column: self._value(request, field, expanders)
                 for field, column in columns.items()
                 if _present(getattr(request, field, None), unset)
             }
             where = {
-                path: getattr(request, field)
+                path: self._value(request, field, expanders)
                 for field, path in paths.items()
                 if _present(getattr(request, field, None), unset)
             }
-            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset)
+            picked_columns, picked_paths = self._resolve(stored_cls, computed, request, unset, expanders)
             applied.update(picked_columns)
             where.update(picked_paths)
             return {
@@ -493,6 +509,7 @@ class Binding:
         key: Sequence[str] | Mapping[str, str],
         project: Callable[[Any, Any], R] | None = None,
         missing: Callable[[Any], R | None] | None = None,
+        expand: Mapping[str, Expander] | None = None,
         unset: tuple[Any, ...] = UNSET_FALSY,
         on_error: Callable[[Exception, bytes], None] | None = None,
     ) -> Any:
@@ -515,6 +532,10 @@ class Binding:
                 ``cls``.
             missing: ``(request) -> reply | None`` when nothing is stored for the key.
                 ``None`` replies nothing at all.
+            expand: ``{key field: fn(request) -> value | values}`` — what a key field
+                looks up, computed per request. A collection answers the NEWEST across
+                every entity it names: one thing recorded under several keys (a tag
+                re-encoded to a second EPC) answers as the one it is.
             unset: Values treated as "not provided" (see :data:`UNSET_FALSY`).
             on_error: Optional ``on_error(exc, raw)`` for the queryable.
 
@@ -523,7 +544,8 @@ class Binding:
 
         Raises:
             ConfigError: If the stored class is unregistered, has no latest
-                projection, declares no ``REQUEST``, or needs a ``project`` hook.
+                projection, declares no ``REQUEST``, needs a ``project`` hook, or
+                ``expand`` names a field that is not part of the key.
         """
         stored_cls: type[s.Seared] = of or cls
         self._require_registered(stored_cls, f'serve_latest({cls.__name__})')
@@ -547,6 +569,7 @@ class Binding:
             )
         shape: Callable[[Any, Any], R] = project if project is not None else (lambda row, _request: row)
         key_columns = _as_mapping(key)
+        expanders = self._expanders(expand, key_columns, f'serve_latest({cls.__name__})')
 
         async def _handler(ctx: QueryContext) -> R | None:
             request = ctx.request
@@ -554,7 +577,7 @@ class Binding:
                 _log.warning('%s: query carried no %s payload', cls.__name__, request_cls.__name__)
                 return None
             entity = {
-                column: getattr(request, field)
+                column: self._value(request, field, expanders)
                 for field, column in key_columns.items()
                 if _present(getattr(request, field, None), unset)
             }
@@ -667,6 +690,7 @@ class Binding:
         computed: dict[str, Callable[[Any], str]],
         request: Any,
         unset: tuple[Any, ...],
+        expanders: Mapping[str, Expander],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Apply the computed targets for one request, sorted as columns and paths.
 
@@ -675,6 +699,7 @@ class Binding:
             computed: ``{request field: target function}`` from :meth:`_split_filters`.
             request: The decoded request payload.
             unset: Values treated as "not provided".
+            expanders: ``{request field: value function}`` from :meth:`_expanders`.
 
         Returns:
             ``({column: value}, {path: value})`` for this request.
@@ -691,6 +716,7 @@ class Binding:
             if not _present(value, unset):
                 continue
             target = pick(request)
+            value = self._value(request, field, expanders)
             if target in stream.json_paths:
                 paths[target] = value
             elif target in stream.index:
@@ -705,6 +731,33 @@ class Binding:
                     msg,
                 )
         return columns, paths
+
+    @staticmethod
+    def _expanders(
+        expand: Mapping[str, Expander] | None,
+        fields: Mapping[str, Any],
+        what: str,
+    ) -> dict[str, Expander]:
+        """Validate an ``expand`` declaration at bind time: each key must be a field that filters.
+
+        An expander on a field that filters nothing would never run, which is the kind of
+        mistake that looks like a working declaration — so it is refused at startup.
+
+        Raises:
+            ConfigError: If ``expand`` names a field outside ``fields``.
+        """
+        spec = dict(expand or {})
+        stray = sorted(set(spec) - set(fields))
+        if stray:
+            msg = f'{what}: expand names {stray}, which are not among its fields {sorted(fields)}'
+            raise ConfigError(msg)
+        return spec
+
+    @staticmethod
+    def _value(request: Any, field: str, expanders: Mapping[str, Expander]) -> Any:
+        """What a present request field filters on: its expander's answer, or the field as sent."""
+        expander = expanders.get(field)
+        return expander(request) if expander is not None else getattr(request, field)
 
     def _require_registered(self, cls: type[s.Seared], what: str) -> None:
         """Fail at bind time, not on the first message, when a class is unregistered."""

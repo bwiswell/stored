@@ -100,7 +100,12 @@ last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | Non
   expiry (a 30-day last-position over a 7-day history). `None` keeps it forever.
 - **`store.latest(cls, **key)`** flushes pending writes, then returns the decoded
   instance for the full key (or `None`). `latest_key` names must be scalar-column
-  fields, checked at registration.
+  fields, checked at registration. A key field may name a **set** of values (a list,
+  tuple or set): the answer is then the newest row across every entity it matches, for
+  one thing recorded under several keys.
+- **Filters take sets too.** Any column or path filter on `query` / `query_latest` / `iter`
+  accepts a collection and matches any member (`IN`); an empty collection matches
+  nothing. A string is always one value.
 
 This is `stored`'s answer to a durable "last-known" query without retaining one mesh
 key per entity — the historian pattern behind e.g. a location store's

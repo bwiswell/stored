@@ -884,3 +884,114 @@ async def test_a_malformed_cursor_errors_the_query_rather_than_restarting_it(ses
         if binding:
             binding.close()
         await store.close()
+
+
+# -- expand: one thing recorded under several keys ----------------------------
+
+
+@zeared.zeared
+class Trail(zeared.Message):
+    """A position read back by tag, as a range reply."""
+
+    TOPIC = 'test/history/trail'
+    SCHEMA = '1'
+    REQUEST = LastPositionRequest
+
+    source: str = zeared.Str(required=True)
+    epc: str = zeared.Str(required=True)
+    observed_at: float = zeared.Float(default=0.0)
+
+
+def to_trail(row: Position, _request: LastPositionRequest) -> Trail:
+    return Trail(source=row.source, epc=row.epc, observed_at=row.observed_at)
+
+
+#: Two spellings of one tag — what a scheme that re-encodes a sale produces.
+_SIBLING = {'E1': 'E1-SOLD', 'E1-SOLD': 'E1'}
+
+
+def _spellings(request: LastPositionRequest) -> object:
+    """Either spelling asks for both; a tag without a sibling stays one value."""
+    sibling = _SIBLING.get(request.epc)
+    return (request.epc, sibling) if sibling else request.epc
+
+
+def _two_spellings_store():
+    store = _store()
+    store.record(Position, Position(source='rtls', epc='E1', x=1.0, observed_at=1000.0))
+    store.record(Position, Position(source='rtls', epc='E2', x=5.0, observed_at=1500.0))
+    store.record(Position, Position(source='rtls', epc='E1-SOLD', x=9.0, observed_at=2000.0))
+    return store
+
+
+async def test_an_expanded_filter_reads_every_key_a_thing_is_recorded_under(session):
+    zeared.session = session
+    store, binding = _two_spellings_store(), None
+    try:
+        await store.flush()
+        binding = Binding(store, session=session)
+        binding.serve_range(Trail, of=Position, project=to_trail, filters=('source', 'epc'), expand={'epc': _spellings})
+        await _settle()
+
+        for asked in ('E1', 'E1-SOLD'):
+            rows = await zeared.aquery(Trail, request=LastPositionRequest(source='rtls', epc=asked), timeout=5.0)
+            assert sorted(r.epc for r in rows) == ['E1', 'E1-SOLD']
+        lone = await zeared.aquery(Trail, request=LastPositionRequest(source='rtls', epc='E2'), timeout=5.0)
+        assert [r.epc for r in lone] == ['E2']
+        # An absent field is not expanded: no filter at all, not "any of nothing".
+        everything = await zeared.aquery(Trail, request=LastPositionRequest(source='rtls'), timeout=5.0)
+        assert len(everything) == 3
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_an_expanded_key_answers_the_newest_of_every_key(session):
+    zeared.session = session
+    store, binding = _two_spellings_store(), None
+    try:
+        await store.flush()
+        binding = Binding(store, session=session)
+        binding.serve_latest(
+            LastPosition,
+            of=Position,
+            key=('source', 'epc'),
+            project=to_last_position,
+            missing=no_position,
+            expand={'epc': _spellings},
+        )
+        await _settle()
+
+        for asked in ('E1', 'E1-SOLD'):
+            found = await zeared.aquery_one(
+                LastPosition, request=LastPositionRequest(source='rtls', epc=asked), timeout=5.0
+            )
+            assert found is not None
+            assert (found.found, found.x) == (True, 9.0)  # the sold spelling is the newer
+        absent = await zeared.aquery_one(
+            LastPosition, request=LastPositionRequest(source='rtls', epc='NOPE'), timeout=5.0
+        )
+        assert absent is not None
+        assert absent.found is False
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+async def test_an_expander_on_a_field_that_filters_nothing_is_refused_at_bind_time(session):
+    # It would never run, which is a mistake that looks exactly like a working declaration.
+    zeared.session = session
+    store = _store()
+    binding = Binding(store, session=session)
+    try:
+        with pytest.raises(ConfigError, match='expand names'):
+            binding.serve_range(Trail, of=Position, project=to_trail, filters=('source',), expand={'epc': _spellings})
+        with pytest.raises(ConfigError, match='expand names'):
+            binding.serve_latest(
+                LastPosition, of=Position, key=('source', 'epc'), project=to_last_position, expand={'x': _spellings}
+            )
+    finally:
+        binding.close()
+        await store.close()
