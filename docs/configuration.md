@@ -54,17 +54,17 @@ mode = "client"
 router = "tcp/router:7447"
 
 [[streams]]
-cls = "rio_protocol.messages:RawRead"
+cls = "myapp.messages:Reading"
 retention = "7d"
-index = ["reader_id"]
+index = ["sensor_id"]
 
 [[streams]]
-cls = "rio_protocol.messages:Location"
+cls = "myapp.messages:Position"
 retention = "48h"
 time_field = "observed_at"   # prune/range by domain event time, not mesh delivery time
 
   [streams.latest]           # keep a newest-per-key projection (durable last-known)
-  key = ["source", "epc"]    # the logical entity key
+  key = ["source", "item"]   # the logical entity key
   retention = "30d"          # outlives the 48h history
 ```
 

@@ -21,10 +21,10 @@ lets one binding serve any `@zeared` class.
 from stored.mesh import AsyncStore
 
 store = AsyncStore(stored.Store('history.db', flush_rows=5000))
-store.register(Position, time_field='observed_at', latest_key=('source', 'epc'))
+store.register(Position, time_field='observed_at', latest_key=('source', 'item'))
 
 store.record(Position, position)                       # sync — a buffered enqueue
-newest = await store.latest(Position, source='rtls', epc=epc)
+newest = await store.latest(Position, source='site-a', item=item)
 async for row in store.iter(Position, since='-7d'):    # one thread hop per page
     ...
 ```
@@ -51,7 +51,7 @@ binding.serve_range(                        # typed time-range history
     since='from_ts', until='to_ts', limit='limit',
 )
 binding.serve_latest(                       # last-known for one entity
-    LastPosition, of=Position, key=('source', 'epc'),
+    LastPosition, of=Position, key=('source', 'item'),
     project=to_last_position, missing=no_position,
 )
 ...
@@ -177,16 +177,16 @@ maps a filter (or key) field to `fn(request)`, and what the function returns is 
 field matches — a single value, or a collection to match **any** of:
 
 ```python
-# A tag whose EPC is rewritten at a sale is one item under two spellings.
-binding.serve_range(AlertRecord, filters=('source', 'epc'), expand={'epc': spellings})
-binding.serve_latest(LastKnownLocation, of=Location, key=('source', 'epc'),
-                     project=to_last_known, expand={'epc': spellings})
+# An item relabelled partway through its life is one thing under two ids.
+binding.serve_range(AlertRecord, filters=('source', 'item'), expand={'item': spellings})
+binding.serve_latest(LastPosition, of=Position, key=('source', 'item'),
+                     project=to_last_position, expand={'item': spellings})
 ```
 
 - A collection filters as `IN (…)`, and an **empty** one matches nothing — "any of none"
   is never read as "no filter".
 - `serve_latest` with a collection answers the **newest** row across every key it names,
-  so either spelling of the tag answers with where the item was last seen.
+  so either id answers with where the item was last seen.
 - The expander runs only when the field is present in the request. An absent field stays
   unfiltered, exactly as without `expand`.
 - An `expand` entry for a field that is not one of the declaration's filters (or key
@@ -303,7 +303,7 @@ rather than `None` — a wire format without optionals. `UNSET_FALSY`
 (`('', 0, 0.0, None)`) is that convention, and it is the default:
 
 ```python
-HistoryRequest(source='rtls')        # filters on source, ignores the empty kind
+HistoryRequest(source='site-a')      # filters on source, ignores the empty kind
 HistoryRequest()                     # filters on nothing: the whole history
 ```
 
@@ -317,7 +317,7 @@ only the fields that differ; every other field keeps `UNSET_FALSY`:
 binding.serve_snapshot(
     LatestPosition,
     of=Position,
-    filters={'floor_id': 'floor_id', 'tags': 'epc'},
+    filters={'floor_id': 'floor_id', 'tags': 'item'},
     since='from_ts',                  # 0 = open: the default policy
     unset={
         'floor_id': (None,),          # None = any floor; 0 is a floor like any other

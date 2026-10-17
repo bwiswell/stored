@@ -1,8 +1,8 @@
 """An async view of a blocking :class:`~stored.store.Store`.
 
 Every ``stored`` read touches SQLite, which blocks. A service on an event loop
-must therefore hop to a thread for each one — which is why all three consumers
-hand-rolled the same ``_db_call = asyncio.to_thread(...)`` shim. :class:`AsyncStore`
+must therefore hop to a thread for each one — which is why the services built on
+it each hand-rolled the same ``_db_call = asyncio.to_thread(...)`` shim. :class:`AsyncStore`
 is that shim, once: the core stays sync, this wraps it.
 
 Deliberately **not** async: ``register`` (one-time DDL on the open path, before the
@@ -38,9 +38,9 @@ class AsyncStore:
 
     ```python
     store = AsyncStore(stored.Store('history.db', flush_rows=5000))
-    store.register(Location, retention=timedelta(days=3), latest_key=('source', 'epc'))
+    store.register(Location, retention=timedelta(days=3), latest_key=('source', 'item'))
     ...
-    newest = await store.latest(Location, source='rtls', epc=epc)
+    newest = await store.latest(Location, source='site-a', item=item)
     ```
 
     Args:

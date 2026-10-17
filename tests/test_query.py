@@ -147,14 +147,14 @@ def test_plan_can_be_pointed_at_another_table():
 
 def test_plan_spells_key_matching_through_the_dialect():
     loud = _LoudDialect()
-    exact, _ = query.plan(_stream(), 'rio/a', query.parse_window(), dialect=loud)
-    globbed, _ = query.plan(_stream(), 'rio/*', query.parse_window(), dialect=loud)
+    exact, _ = query.plan(_stream(), 'fleet/a', query.parse_window(), dialect=loud)
+    globbed, _ = query.plan(_stream(), 'fleet/*', query.parse_window(), dialect=loud)
     assert 'IS_EXACTLY(_key_expr, ?)' in exact
     assert 'MATCHES(_key_expr, ?)' in globbed
 
 
 def test_plan_defaults_to_the_sqlite_spelling():
-    sql, _ = query.plan(_stream(), 'rio/*', query.parse_window())
+    sql, _ = query.plan(_stream(), 'fleet/*', query.parse_window())
     assert '"_key_expr" GLOB ?' in sql
 
 
@@ -208,7 +208,7 @@ def test_plan_combines_path_filters_with_column_filters():
 
 
 def test_an_anchor_round_trips_through_an_opaque_cursor():
-    anchor = (dt.datetime(2026, 9, 6, 12, 0, 0, 123456), '0001-abc', 'rio/x/1')
+    anchor = (dt.datetime(2026, 9, 6, 12, 0, 0, 123456), '0001-abc', 'fleet/x/1')
     cursor = query.encode_anchor(anchor)
     assert '=' not in cursor
     assert cursor.isalnum() or set(cursor) <= set('-_') | set(cursor)  # URL-safe alphabet only

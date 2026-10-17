@@ -1,6 +1,6 @@
 """The core-local ``stored.row.Meta`` Protocol must track zeared's real ``ZenohMeta``.
 
-The core mirrors ``ZenohMeta`` structurally (plan 02 Stage 3) without importing
+The core mirrors ``ZenohMeta`` structurally, without importing
 it, so ``build_row`` reads its attributes directly. This exercises a *real*
 ``ZenohMeta`` through that path, so an upstream field rename surfaces here.
 """

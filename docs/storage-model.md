@@ -88,9 +88,9 @@ maintains a second table, `latest_<snake>`, alongside the history:
 ```python
 store.register(
     Location, retention='7d', time_field='observed_at',
-    latest_key=('source', 'epc'), latest_retention='30d',
+    latest_key=('source', 'item'), latest_retention='30d',
 )
-last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | None
+last = store.latest(Location, source='site-a', item='i-1')   # -> Location | None
 ```
 
 - **One row per key.** `latest_<snake>` has the *same columns* as the history table
@@ -133,8 +133,8 @@ last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | Non
   returns `(row, LatestMeta)`, and `LatestMeta.run_start` is naive UTC or `None`.
 
 This is `stored`'s answer to a durable "last-known" query without retaining one mesh
-key per entity — the historian pattern behind e.g. a location store's
-`LastKnownLocation`. Serving that over a mesh contract stays the consumer's job;
+key per entity — the historian pattern behind a "where was it last seen" reply.
+Serving that over a mesh contract stays the consumer's job;
 `stored` provides the read primitive.
 
 ## Schema evolution

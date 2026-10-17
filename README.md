@@ -129,10 +129,10 @@ wraps one so it doesn't have to hand-roll the thread hop:
 from stored.mesh import AsyncStore
 
 store = AsyncStore(stored.Store('history.db', flush_rows=5000))
-store.register(Location, retention=timedelta(days=3), latest_key=('source', 'epc'))
+store.register(Location, retention=timedelta(days=3), latest_key=('source', 'item'))
 
 store.record(Location, location)                  # sync — a buffered enqueue
-newest = await store.latest(Location, source='rtls', epc=epc)
+newest = await store.latest(Location, source='site-a', item=item)
 async for row in store.iter(Location, since='-7d'):   # one thread hop per page
     ...
 ```
@@ -153,15 +153,15 @@ from stored.mesh import Binding
 binding = Binding(store)
 binding.record(Alarm, store_as=Event, via=from_alarm)   # subscribe A → persist B
 binding.serve_range(Event, filters=('source', 'kind'), since='from_ts', limit='limit')
-binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),
+binding.serve_latest(LastPosition, of=Position, key=('source', 'item'),
                      project=to_last_position, missing=no_position)
 
 binding.serve_range(Event, filters=('source',), stream=True)   # reply row by row
 binding.serve_range(Event, filters=('source',), limit='limit', cursor='cursor')  # paged: the last reply of a full page carries the next cursor
 
 binding.serve_snapshot(Placed, filters={'zone': 'zones.department'})  # current state, by zone
-binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),  # one thing under several keys:
-                     project=to_last_position, expand={'epc': spellings})  # the newest of them
+binding.serve_latest(LastPosition, of=Position, key=('source', 'item'),  # one thing under several keys:
+                     project=to_last_position, expand={'item': spellings})  # the newest of them
 ```
 
 Recorded history can also go back **onto** the mesh, where ordinary subscribers

@@ -629,7 +629,7 @@ def test_declared_paths_are_indexed_on_both_tables(tmp_path):
 
 
 def test_a_path_filter_actually_uses_its_index(tmp_path):
-    """The whole point of Stage 4: declared, emitted — and *chosen* by the planner."""
+    """The whole point of a path index: declared, emitted — and *chosen* by the planner."""
     store = _zoned(tmp_path)
     stream = store.registry.get(Zoned)
     try:
@@ -746,7 +746,7 @@ def test_a_set_valued_path_filter_matches_any_member(tmp_path):
 
 
 def test_latest_across_several_keys_is_the_newest_of_them(tmp_path, backend):
-    """One thing recorded under two keys — a tag re-encoded to a second EPC — answers as one."""
+    """One thing recorded under two keys — an item relabelled under a second id — answers as one."""
     store = _open(tmp_path, backend, flush_secs=0)
     try:
         store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))

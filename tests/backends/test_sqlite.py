@@ -121,8 +121,8 @@ def test_time_ordering_matches_chronology_across_fractional_seconds():
 
 
 def _latest_table(backend):
-    cols = {'source': 'VARCHAR', 'epc': 'VARCHAR', 'x': 'DOUBLE', '_event_at': 'TIMESTAMP'}
-    backend.ensure_table('latest_t', cols, ('source', 'epc'))
+    cols = {'source': 'VARCHAR', 'item': 'VARCHAR', 'x': 'DOUBLE', '_event_at': 'TIMESTAMP'}
+    backend.ensure_table('latest_t', cols, ('source', 'item'))
 
 
 def test_upsert_latest_keeps_newest_within_a_batch():
@@ -132,11 +132,11 @@ def test_upsert_latest_keeps_newest_within_a_batch():
         backend.upsert_latest(
             'latest_t',
             [
-                {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': dt.datetime(2026, 1, 1)},
-                {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': dt.datetime(2026, 3, 1)},  # newest
-                {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': dt.datetime(2026, 2, 1)},  # out of order
+                {'source': 'site-a', 'item': 'A', 'x': 1.0, '_event_at': dt.datetime(2026, 1, 1)},
+                {'source': 'site-a', 'item': 'A', 'x': 3.0, '_event_at': dt.datetime(2026, 3, 1)},  # newest
+                {'source': 'site-a', 'item': 'A', 'x': 2.0, '_event_at': dt.datetime(2026, 2, 1)},  # out of order
             ],
-            ('source', 'epc'),
+            ('source', 'item'),
             '_event_at',
         )
         rows = backend.select('SELECT * FROM "latest_t"')
@@ -151,10 +151,10 @@ def test_upsert_latest_ignores_older_across_calls():
     backend = SQLiteBackend(':memory:')
     try:
         _latest_table(backend)
-        key, cmp = ('source', 'epc'), '_event_at'
+        key, cmp = ('source', 'item'), '_event_at'
 
         def put(x, month):
-            row = {'source': 's', 'epc': 'A', 'x': x, '_event_at': dt.datetime(2026, month, 1)}
+            row = {'source': 's', 'item': 'A', 'x': x, '_event_at': dt.datetime(2026, month, 1)}
             backend.upsert_latest('latest_t', [row], key, cmp)
 
         put(3.0, 3)

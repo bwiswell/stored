@@ -1,6 +1,6 @@
 """Bind a store to typed mesh contracts.
 
-The three consumers of ``stored`` each hand-wrote the same shapes: a subscriber
+The services built on ``stored`` each hand-wrote the same shapes: a subscriber
 that records (sometimes normalizing one contract into another), a queryable that
 turns a typed request into a time-range read, and a queryable that answers
 "newest for this entity" from the latest projection. :class:`Binding` is those
@@ -51,8 +51,8 @@ UNSET_FALSY: tuple[Any, ...] = ('', 0, 0.0, None)
 type FilterTarget = str | Callable[[Any], str]
 
 #: What a filtered field's VALUE may be computed by: ``(request) -> value``, or a set of
-#: values to match any of — for one thing recorded under more than one key, such as a tag
-#: re-encoded to a second EPC. Applied only when the field is present in the request.
+#: values to match any of — for one thing recorded under more than one key, such as an
+#: item relabelled under a second id. Applied only when the field is present in the request.
 type Expander = Callable[[Any], Any]
 
 
@@ -559,7 +559,7 @@ class Binding:
         """Serve "newest for this entity" from a latest-per-key projection.
 
         ``cls`` is the **reply** contract; ``of`` is the class actually stored. When
-        they differ — a ``Location`` row answered as a ``LastKnownLocation`` — the
+        they differ — a ``Position`` row answered as a ``LastPosition`` — the
         ``project`` hook shapes the reply, because only the caller knows how a stored
         row becomes its contract. When they are the same class (a row type that
         doubles as its own reply), the projection is the identity and can be omitted.
@@ -579,8 +579,8 @@ class Binding:
                 ``None`` replies nothing at all.
             expand: ``{key field: fn(request) -> value | values}`` — what a key field
                 looks up, computed per request. A collection answers the NEWEST across
-                every entity it names: one thing recorded under several keys (a tag
-                re-encoded to a second EPC) answers as the one it is.
+                every entity it names: one thing recorded under several keys (an item
+                relabelled under a second id) answers as the one it is.
             unset: Values treated as "not provided" — one tuple for every field, or
                 ``{field: sentinels}`` per field, the rest keeping :data:`UNSET_FALSY`.
             on_error: Optional ``on_error(exc, raw)`` for the queryable.
