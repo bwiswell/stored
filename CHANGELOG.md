@@ -8,9 +8,9 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
-## 0.3.5 — unreleased
+## 0.3.5 — 2026-10-16
 
-**Tagged releases, the changelog in the repository, and seared and zeared pinned to release tags.**
+**Tagged releases, an in-repo changelog, sibling tag pins, and a daemon that starts and honours its config.**
 
 ### Added
 
@@ -37,7 +37,8 @@ lines as it lands, and the entry is dated when that version is released.
   so the tags are what pin them. Relocking works again: stored's seared source carried no tag, zeared's pins seared
   by one, and uv refuses two different URLs for one package.
 - **Dependencies:** the lockfile resolves seared 0.3.4 (was 0.3.2) and zeared 0.3.13 (was 0.3.7). It is the suite's
-  first run against zeared 0.3.8 to 0.3.13, and nothing stored relies on changed.
+  first run against zeared 0.3.8 to 0.3.13, and nothing stored relies on changed. The dev tools refresh too (`ty`
+  0.0.89, `prek` 0.5.5); `ruff` stays at 0.16.10, since 0.17 adds an import convention not yet adopted here.
 
 ### Fixed
 
