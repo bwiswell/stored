@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import log
-from .config import StoredConfig
+from .config import StoredConfig, check_identity
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -29,10 +29,23 @@ def _load_config(path: str | None) -> StoredConfig:
 
 
 def _cmd_validate_config(args: argparse.Namespace) -> int:
-    """Load and summarize the configuration, reporting any error."""
+    """Load and check the configuration, and summarize it.
+
+    Beyond the load, it checks what ``run`` would refuse at start (0.4.1): the
+    identity, and a ``[zenoh]`` table's values, loaded as ``run`` loads them.
+    With no table, ``run`` reads the session from ``ZEARED_SESSION_*``, which
+    this leaves unchecked: the summary says ``zenoh=env``, and nothing imports
+    zeared.
+    """
     cfg = _load_config(args.config)
+    check_identity(cfg.identity)
+    if cfg.zenoh:
+        from .zenoh.session import session_config  # lazy: only a table needs the transport
+
+        session_config(cfg.zenoh)
     print(  # noqa: T201 - CLI user-facing output
-        f'ok: identity={cfg.identity!r} backend={cfg.backend!r} db_path={cfg.db_path!r} streams={len(cfg.streams)}',
+        f'ok: identity={cfg.identity!r} backend={cfg.backend!r} db_path={cfg.db_path!r} streams={len(cfg.streams)} '
+        f'zenoh={"table" if cfg.zenoh else "env"}',
     )
     return 0
 

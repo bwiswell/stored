@@ -15,6 +15,32 @@ def test_store_only_import_stays_transport_free():
     subprocess.run([sys.executable, '-c', code], check=True)
 
 
+def test_validate_config_without_a_zenoh_table_stays_transport_free(tmp_path):
+    # With no [zenoh] table there's nothing for validate-config to load as a
+    # SessionConfig, so it must check the rest without importing the transport.
+    toml = tmp_path / 'c.toml'
+    toml.write_text('identity = "x"\n')
+    code = (
+        'from stored.cli import main; import sys; '
+        f'assert main(["-c", {str(toml)!r}, "validate-config"]) == 0; '
+        "assert 'zeared' not in sys.modules, 'validate-config pulled zeared'; "
+        "assert 'zenoh' not in sys.modules, 'validate-config pulled zenoh'"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
+
+
+def test_validate_config_with_a_zenoh_table_loads_it_with_zeared(tmp_path):
+    # The mirror: a table is checked by loading it as zeared's SessionConfig.
+    toml = tmp_path / 'c.toml'
+    toml.write_text('identity = "x"\n[zenoh]\nmode = "peer"\n')
+    code = (
+        'from stored.cli import main; import sys; '
+        f'assert main(["-c", {str(toml)!r}, "validate-config"]) == 0; '
+        "assert 'zeared' in sys.modules, 'validate-config left the table unchecked'"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
+
+
 def test_bare_import_does_not_pull_duckdb():
     # DuckDB stays an optional extra with a lazy backend import — merely importing
     # stored (or selecting the default SQLite backend) must not load it, even when

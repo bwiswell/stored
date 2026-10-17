@@ -29,6 +29,16 @@ lines as it lands, and the entry is dated when that version is released.
   `ZEARED_SESSION_*` variables (`SessionConfig.from_env`), so an environment-only config can `run`, where it had no
   `mode`. A table, when there is one, is still used whole. With neither, `run` raises a `ConfigError` saying where
   to set a `mode`, as it does for a table without one. `stored.zenoh.session.session_config` makes the choice.
+- **`stored.config.check_identity(identity)`**, the daemon's identity rule as a function of the string alone: a
+  `ConfigError` for an identity that can't be one key segment.
+
+### Changed
+
+- **Breaking:** `validate-config` refuses what `run` would refuse at start, so a config that passed it may not. An
+  `identity` that can't be one key segment fails it, and so does a `[zenoh]` table with no `mode` or a wrong value
+  (`mode = "bogus"`), loaded with zeared as `run` loads it. With no table, zeared isn't imported, and the
+  `ZEARED_SESSION_*` variables `run` would read go unchecked.
+- **`validate-config`'s summary ends `zenoh=table` or `zenoh=env`,** saying where `run` takes its session from.
 
 ## 0.4.0 — 2026-10-17
 

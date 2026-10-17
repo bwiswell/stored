@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import zeared as z
 
+from ..config import check_identity
 from ..errors import ConfigError
 from ..log import configure, get_logger
 from ..store import Store
@@ -31,29 +32,6 @@ if TYPE_CHECKING:
     from ..config import StoredConfig, StreamSpec
 
 _log = get_logger('zenoh.daemon')
-
-#: Characters a key segment can't hold literally: ``/`` splits it, and the rest are
-#: Zenoh's wildcard and reserved characters, so ``*`` would declare a token on every
-#: identity at once.
-_NOT_IN_A_SEGMENT = frozenset('/*$?#')
-
-
-def _check_identity(identity: str) -> None:
-    """Refuse an identity that can't be the last segment of the presence key.
-
-    Raises:
-        ConfigError: If ``identity`` is empty, or holds a character a key segment
-            can't hold literally.
-    """
-    if not identity:
-        msg = 'identity is empty; it names this daemon on the mesh (stored/presence/{identity})'
-        raise ConfigError(msg)
-    found = sorted(_NOT_IN_A_SEGMENT.intersection(identity))
-    if found:
-        msg = (
-            f'identity {identity!r} holds {"".join(found)!r}; it must be one key segment (stored/presence/{{identity}})'
-        )
-        raise ConfigError(msg)
 
 
 def _resolve(spec: StreamSpec) -> type[z.Message]:
@@ -167,7 +145,7 @@ class Daemon:
         """Open resources, register + subscribe every stream, declare presence, signal readiness."""
         cfg = self._config
         configure(cfg.log_level)
-        _check_identity(cfg.identity)
+        check_identity(cfg.identity)
 
         if self._injected_store is not None:
             store = self._injected_store
