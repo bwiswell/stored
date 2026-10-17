@@ -8,6 +8,45 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.0 — unreleased
+
+**On seared and zeared 0.4.0.** stored adopts both siblings' breaking releases, which change what it records and
+serves in the ways marked below, and a chronicler no longer records each retained value again every time it starts.
+
+### Changed
+
+- **Breaking:** a liveliness class's departures are no longer recorded. zeared 0.4.0 delivers them to `on_offline`,
+  as a key's identity with no message, where it delivered them to `on_message` as a typed will, and the chronicler
+  subscribes `on_message` only. stored records the messages published on the mesh, and nothing else.
+- **Breaking:** samples are decoded by seared 0.4.0's stricter rules before stored sees them, so one that 0.3.x
+  recorded can go to the stream's `on_error` instead: a `null` in a required field, a fractional number into an
+  `Int`, a `2` into a `Bool`. A `null` on a field with a default records the default, where it recorded `None`, so a
+  `time_field` declared `Float(default=0.0)` reads 1970 rather than `NULL`.
+- **Breaking:** a binding's request is decoded the same way. A `null` on a request field with a default reads as
+  that default, so a sentinel policy that lists `None` counts the field as provided; a `null` in a required request
+  field leaves the request undecoded, and the binding logs that the query carried no payload and replies with
+  nothing.
+- **Breaking:** history is read back strictly. A row the stream's current class can't hold exactly, written before a
+  field was retyped (`3.7` under an `Int`, `2` under a `Bool`), raises `seared.ValidationError` from a query, where
+  0.3.x coerced it, and a history queryable replies with that error in seared 0.4.0's `Cls.path: reason` form.
+- **Breaking:** a message class with a `Path` slot, or a `Bytes` slot in its default base64 form, in a single key
+  segment raises zeared's `TopicError` when the chronicler or a binding first subscribes it, so a daemon configured
+  with one fails at start. Either can render a `/` and split the key. Use `Bytes(encoding='hex')` or a `Str` slot,
+  or a trailing `{name**}` slot for a path.
+- **seared and zeared are pinned to their `v0.4.0` tags,** and the declared ranges rise to `seared>=0.4.0,<0.5` and
+  `zeared>=0.4.0,<0.5`.
+- **Dependencies:** the lockfile resolves seared 0.4.0 (was 0.3.4) and zeared 0.4.0 (was 0.3.13). Nothing else
+  moves.
+
+### Fixed
+
+- **A restarted chronicler records each retained value once.** A chronicler fetches the retained values already on
+  the mesh when it starts, and a managed session fetches them again when its link comes back. The replies carried no
+  timestamp, so each was given a fresh `_ts_hlc`, the primary key never matched, and every start or reconnect added
+  a duplicate row. zeared 0.4.0 replies with the value's original timestamp, so a replay is the row already stored
+  and its insert does nothing. The publisher's zeared decides it: replies from a session still on 0.3.x carry no
+  timestamp, and their duplicates continue until it upgrades.
+
 ## 0.3.5 — 2026-10-16
 
 **Tagged releases, an in-repo changelog, sibling tag pins, and a daemon that starts and honours its config.**
