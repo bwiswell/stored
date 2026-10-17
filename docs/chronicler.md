@@ -121,6 +121,17 @@ deployment with access rules grants the daemon `liveliness_token` on
 `stored/presence/**`, and its watchers `declare_liveliness_subscriber` and
 `liveliness_query` there.
 
+**The watchdog** (0.4.1). The unit sets `WatchdogSec=30`, and the daemon pings
+systemd with `WATCHDOG=1` every half period, but only while the store can still
+do its work: its lock, which every backend read and write takes, must come free
+within half a tick, and the writer's periodic flush must be running. A backend
+wedged mid-statement, or a writer that has stopped, stops the pings, and systemd
+restarts the daemon (`Restart=on-failure`). Each missed ping logs why. The pings
+run only when systemd sets `WATCHDOG_USEC` for this process, so a daemon outside
+such a unit sends none. `Store.health(timeout)` is the same check, for a service
+that embeds a store and has a watchdog of its own: `None` when healthy, else a
+short reason.
+
 `identity` must be one key segment (no `/`, `*`, `$`, `?` or `#`), since it is the
 key's last segment; `run` refuses any other with a `ConfigError` before it opens
 anything.
