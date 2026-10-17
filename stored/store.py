@@ -801,6 +801,28 @@ class Store:
                 latest = self._backend.select(f'SELECT COUNT(*) AS n FROM "{stream.latest_table}"')[0]['n']  # noqa: S608 (quoted identifier)
         return int(history), int(latest)
 
+    def health(self, timeout: float) -> str | None:
+        """``None`` if the store can still do its work, else why not (0.4.1).
+
+        Two checks, both cheap: the store's lock, which every backend read and
+        write takes, must come free within ``timeout`` seconds, so a backend
+        wedged mid-statement fails it; and the writer's periodic flush must be
+        running. The daemon's systemd watchdog pings only while this is
+        ``None``.
+
+        Args:
+            timeout: Seconds to wait for the lock.
+
+        Returns:
+            ``None`` when healthy, or a short reason.
+        """
+        if not self._lock.acquire(timeout=timeout):
+            return f'the store has been busy for over {timeout:g}s'
+        self._lock.release()
+        if not self._writer.alive:
+            return 'the writer has stopped flushing'
+        return None
+
     def flush(self) -> None:
         """Flush buffered writes to the backend."""
         self._writer.flush()

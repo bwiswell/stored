@@ -121,6 +121,27 @@ deployment with access rules grants the daemon `liveliness_token` on
 `stored/presence/**`, and its watchers `declare_liveliness_subscriber` and
 `liveliness_query` there.
 
+**The watchdog** (0.4.1). The unit sets `WatchdogSec=30`, and the daemon pings
+systemd with `WATCHDOG=1` every half period, but only while the store can still
+do its work: its lock, which every backend read and write takes, must come free
+within half a tick, and the writer's periodic flush must be running. A backend
+wedged mid-statement, or a writer that has stopped, stops the pings, and systemd
+restarts the daemon (`Restart=on-failure`). Each missed ping logs why. The pings
+run only when systemd sets `WATCHDOG_USEC` for this process, so a daemon outside
+such a unit sends none. `Store.health(timeout)` is the same check, for a service
+that embeds a store and has a watchdog of its own: `None` when healthy, else a
+short reason.
+
+**The mesh link** (0.4.1). Once ready, the daemon's `systemctl status` line reads
+`recording N stream(s) as stored/presence/{identity}`. With `auto_reconnect` in
+`[zenoh]` the session is a `zeared.ManagedSession`, and when its link to the mesh
+goes stale the status becomes `mesh link lost; reconnecting`, with a warning in
+the log, and returns once the link is whole again. Nothing else changes: the
+session reconnects, re-fetches retained values and keeps the presence token by
+itself, so the watchdog keeps pinging, since a restart would undo that work, and a
+hub restart would restart every daemon on the mesh at once. A session without
+`auto_reconnect` has no such signals.
+
 `identity` must be one key segment (no `/`, `*`, `$`, `?` or `#`), since it is the
 key's last segment; `run` refuses any other with a `ConfigError` before it opens
 anything.

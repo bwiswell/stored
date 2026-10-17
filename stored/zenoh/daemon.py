@@ -93,6 +93,27 @@ def _sd_notify(state: str) -> None:
         _log.warning('sd_notify(%s) failed', state)
 
 
+def _watchdog_interval() -> float | None:
+    """Seconds between watchdog pings, or ``None`` when systemd wants none (0.4.1).
+
+    systemd sets ``WATCHDOG_USEC`` when the unit has ``WatchdogSec=``, and
+    ``WATCHDOG_PID`` to the process it expects pings from. Pinging at half the
+    period leaves a missed tick's slack, as ``sd_watchdog_enabled(3)`` advises.
+    """
+    usec = os.environ.get('WATCHDOG_USEC')
+    if not usec:
+        return None
+    pid = os.environ.get('WATCHDOG_PID')
+    if pid and pid != str(os.getpid()):
+        return None
+    try:
+        period = int(usec) / 1_000_000
+    except ValueError:
+        _log.warning('ignoring WATCHDOG_USEC=%r: not a number of microseconds', usec)
+        return None
+    return period / 2 if period > 0 else None
+
+
 class Daemon:
     """Owns the store, session, chronicler, and reaper for a running chronicler.
 
@@ -110,14 +131,18 @@ class Daemon:
         '_config',
         '_injected_session',
         '_injected_store',
+        '_link_handles',
         '_owns_session',
         '_owns_store',
         '_presence',
         '_reaper_stop',
         '_reaper_thread',
         '_session',
+        '_status',
         '_stop',
         '_store',
+        '_watchdog_stop',
+        '_watchdog_thread',
     )
 
     def __init__(self, config: StoredConfig, *, session: Any = None, store: Store | None = None) -> None:
@@ -128,10 +153,14 @@ class Daemon:
         self._session: Any = None
         self._chronicler: Chronicler | None = None
         self._presence: z.PresenceToken | None = None
+        self._link_handles: list[Any] = []
+        self._status = ''
         self._owns_store = False
         self._owns_session = False
         self._reaper_stop = threading.Event()
         self._reaper_thread: threading.Thread | None = None
+        self._watchdog_stop = threading.Event()
+        self._watchdog_thread: threading.Thread | None = None
         self._stop = threading.Event()
 
     def start(self) -> None:
@@ -176,6 +205,7 @@ class Daemon:
         self._store = store
         self._session = session
         self._chronicler = chronicler
+        self._link_handles = self._watch_link(session)
 
         if cfg.prune_interval > 0:
             self._reaper_thread = threading.Thread(
@@ -186,12 +216,45 @@ class Daemon:
             )
             self._reaper_thread.start()
 
+        interval = _watchdog_interval()
+        if interval is not None:
+            self._watchdog_thread = threading.Thread(
+                target=self._watchdog_loop,
+                args=(store, interval),
+                name='stored-watchdog',
+                daemon=True,
+            )
+            self._watchdog_thread.start()
+
         # Last before READY: the token says the daemon is recording, so it goes up
         # once every stream is subscribed.
         self._presence = ChroniclerPresence.declare_presence(session=session, identity=cfg.identity)
 
         _sd_notify('READY=1')
-        _log.info('stored chronicler ready (%d stream(s)) as %s', len(cfg.streams), self._presence.key)
+        self._status = f'recording {len(cfg.streams)} stream(s) as {self._presence.key}'
+        _sd_notify(f'STATUS={self._status}')
+        _log.info('stored chronicler ready: %s', self._status)
+
+    def _watch_link(self, session: Any) -> list[Any]:
+        """Report the mesh link's state to the log and systemd, for a session that can lose it (0.4.1).
+
+        Only a ``zeared.ManagedSession`` has the signals (``auto_reconnect`` in
+        ``[zenoh]``). It reconnects, re-fetches retained values and keeps the
+        presence token by itself, so a lost link changes the status and
+        nothing else: the watchdog keeps pinging, since a restart would undo
+        that work, and a hub restart would restart every daemon at once.
+        """
+        if not isinstance(session, z.ManagedSession):
+            return []
+        return [session.on_link_lost(self._link_lost), session.on_link_restored(self._link_restored)]
+
+    def _link_lost(self, _session: Any) -> None:
+        _log.warning('mesh link lost: nothing is recorded until the session reconnects')
+        _sd_notify('STATUS=mesh link lost; reconnecting')
+
+    def _link_restored(self, _session: Any) -> None:
+        _log.info('mesh link restored: %s', self._status)
+        _sd_notify(f'STATUS={self._status}')
 
     def _reaper_loop(self, store: Store, interval: float) -> None:
         """Sweep expired rows every ``interval`` seconds until stopped."""
@@ -203,6 +266,27 @@ class Daemon:
             except Exception:  # noqa: BLE001 — a daemon loop outlives any single failure
                 _log.exception('reaper sweep failed')
 
+    def _watchdog_tick(self, store: Store, timeout: float) -> bool:
+        """Ping systemd's watchdog if the store can still do its work; whether it pinged.
+
+        A store that is wedged, or whose writer has stopped, gets no ping, so
+        systemd restarts the daemon once ``WatchdogSec`` passes without one.
+        """
+        problem = store.health(timeout)
+        if problem is not None:
+            _log.warning('watchdog: not pinging, since %s', problem)
+            return False
+        _sd_notify('WATCHDOG=1')
+        return True
+
+    def _watchdog_loop(self, store: Store, interval: float) -> None:
+        """Tick every ``interval`` seconds until stopped, giving the store half of it."""
+        while not self._watchdog_stop.wait(interval):
+            try:
+                self._watchdog_tick(store, interval / 2)
+            except Exception:  # noqa: BLE001 — a daemon loop outlives any single failure
+                _log.exception('watchdog tick failed')
+
     def wait(self) -> None:
         """Block until :meth:`stop` (or a shutdown signal)."""
         self._stop.wait()
@@ -212,8 +296,15 @@ class Daemon:
         self._stop.set()
 
     def shutdown(self) -> None:
-        """Tear down in order: presence → reaper → chronicler → session → store."""
+        """Tear down in order: link watch → watchdog → presence → reaper → chronicler → session → store."""
         _sd_notify('STOPPING=1')
+        for handle in self._link_handles:
+            handle.cancel()
+        self._link_handles = []
+        self._watchdog_stop.set()
+        if self._watchdog_thread is not None:
+            self._watchdog_thread.join(timeout=5.0)
+            self._watchdog_thread = None
         # First, so watchers see the daemon go as it stops recording. Releasing the
         # session would withdraw it too, but not an injected session's.
         if self._presence is not None:

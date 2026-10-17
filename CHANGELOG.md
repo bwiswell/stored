@@ -8,6 +8,24 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.1 — unreleased
+
+**The daemon's health, as systemd sees it.**
+
+### Added
+
+- **A systemd watchdog.** The unit template sets `WatchdogSec=30`, and the daemon pings `WATCHDOG=1` every half
+  period while the store can still do its work: its lock comes free within half a tick and its writer is flushing. A
+  wedged backend or a stopped writer stops the pings, so systemd restarts the daemon, and each missed ping logs why.
+  The daemon pings only when systemd sets `WATCHDOG_USEC` for it.
+- **`Store.health(timeout)`**, that check on its own: `None` when the store's lock comes free within `timeout`
+  seconds and its writer is flushing, else a short reason. `Writer.alive` says whether the periodic flush is
+  running.
+- **The mesh link's state in `systemctl status`.** Once ready, the daemon's status reads
+  `recording N stream(s) as stored/presence/{identity}`. On a `ManagedSession` (`auto_reconnect` in `[zenoh]`) a
+  lost link turns it to `mesh link lost; reconnecting`, with a warning in the log, until the link returns. The
+  watchdog keeps pinging meanwhile: the session recovers by itself, and a restart would undo that.
+
 ## 0.4.0 — 2026-10-17
 
 **On seared 0.4.0 and zeared 0.4.1, with a presence token for the daemon.** stored adopts both siblings' breaking

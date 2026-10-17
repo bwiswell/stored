@@ -71,3 +71,18 @@ def test_a_row_with_no_compare_value_stays_out_of_the_projection():
 
     assert [[row['id'] for row in rows] for _table, rows in backend.batches] == [[1, 2], [3]]  # history: every row
     assert backend.upserts == [('latest_t', [2])]
+
+
+def test_alive_needs_no_thread_without_a_timer():
+    writer = Writer(FakeBackend(), flush_rows=100, flush_secs=0)
+    assert writer.alive
+    writer.close()
+
+
+def test_alive_follows_the_flush_thread():
+    writer = Writer(FakeBackend(), flush_rows=100, flush_secs=60)
+    assert not writer.alive  # not started yet
+    writer.start()
+    assert writer.alive
+    writer.close()
+    assert not writer.alive
