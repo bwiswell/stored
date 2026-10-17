@@ -21,7 +21,7 @@ query threads), so cross-thread use over the single connection is safe.
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import decimal
 import sqlite3
 from typing import TYPE_CHECKING, Any
@@ -46,16 +46,16 @@ def _register_adapters() -> None:
     ordering is correct independent of the converter; the same adapter formats both stored
     values and bound query bounds, keeping range comparisons self-consistent.
     """
-    sqlite3.register_adapter(datetime.datetime, lambda v: v.isoformat(sep=' '))
-    sqlite3.register_adapter(datetime.date, lambda v: v.isoformat())
-    sqlite3.register_adapter(datetime.time, lambda v: v.isoformat())
+    sqlite3.register_adapter(dt.datetime, lambda v: v.isoformat(sep=' '))
+    sqlite3.register_adapter(dt.date, lambda v: v.isoformat())
+    sqlite3.register_adapter(dt.time, lambda v: v.isoformat())
     sqlite3.register_adapter(decimal.Decimal, str)
-    sqlite3.register_adapter(datetime.timedelta, lambda v: repr(v.total_seconds()))
-    sqlite3.register_converter('TIMESTAMP', lambda b: datetime.datetime.fromisoformat(b.decode()))
-    sqlite3.register_converter('DATE', lambda b: datetime.date.fromisoformat(b.decode()))
-    sqlite3.register_converter('TIME', lambda b: datetime.time.fromisoformat(b.decode()))
+    sqlite3.register_adapter(dt.timedelta, lambda v: repr(v.total_seconds()))
+    sqlite3.register_converter('TIMESTAMP', lambda b: dt.datetime.fromisoformat(b.decode()))
+    sqlite3.register_converter('DATE', lambda b: dt.date.fromisoformat(b.decode()))
+    sqlite3.register_converter('TIME', lambda b: dt.time.fromisoformat(b.decode()))
     sqlite3.register_converter('DECIMAL', lambda b: decimal.Decimal(b.decode()))
-    sqlite3.register_converter('INTERVAL', lambda b: datetime.timedelta(seconds=float(b)))
+    sqlite3.register_converter('INTERVAL', lambda b: dt.timedelta(seconds=float(b)))
 
 
 _register_adapters()
@@ -260,7 +260,7 @@ class SQLiteBackend:
         self,
         table: str,
         column: str,
-        cutoff: datetime.datetime,
+        cutoff: dt.datetime,
         *,
         fallback: str | None = None,
     ) -> int:

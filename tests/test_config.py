@@ -44,10 +44,10 @@ def test_stream_spec_latest_projection_parses():
         {
             'cls': 'pkg.mod:Location',
             'time_field': 'observed_at',
-            'latest': {'key': ['source', 'epc'], 'retention': '30d'},
+            'latest': {'key': ['source', 'item'], 'retention': '30d'},
         }
     )
     assert spec.time_field == 'observed_at'
     assert spec.latest is not None
-    assert spec.latest.key == ['source', 'epc']
+    assert spec.latest.key == ['source', 'item']
     assert spec.latest.retention == '30d'

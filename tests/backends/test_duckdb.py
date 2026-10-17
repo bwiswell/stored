@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 
 import pytest
 
@@ -68,15 +68,15 @@ def test_ensure_table_adds_missing_column():
 def test_upsert_latest_keeps_newest():
     backend = DuckDBBackend(':memory:')
     try:
-        cols = {'source': 'VARCHAR', 'epc': 'VARCHAR', 'x': 'DOUBLE', '_event_at': 'TIMESTAMP'}
-        backend.ensure_table('latest_t', cols, ('source', 'epc'))
-        key, cmp = ('source', 'epc'), '_event_at'
+        cols = {'source': 'VARCHAR', 'item': 'VARCHAR', 'x': 'DOUBLE', '_event_at': 'TIMESTAMP'}
+        backend.ensure_table('latest_t', cols, ('source', 'item'))
+        key, cmp = ('source', 'item'), '_event_at'
         backend.upsert_latest(
             'latest_t',
             [
-                {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': datetime.datetime(2026, 1, 1)},
-                {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': datetime.datetime(2026, 3, 1)},  # newest
-                {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': datetime.datetime(2026, 2, 1)},  # out of order
+                {'source': 'site-a', 'item': 'A', 'x': 1.0, '_event_at': dt.datetime(2026, 1, 1)},
+                {'source': 'site-a', 'item': 'A', 'x': 3.0, '_event_at': dt.datetime(2026, 3, 1)},  # newest
+                {'source': 'site-a', 'item': 'A', 'x': 2.0, '_event_at': dt.datetime(2026, 2, 1)},  # out of order
             ],
             key,
             cmp,
@@ -86,7 +86,7 @@ def test_upsert_latest_keeps_newest():
         assert rows[0]['x'] == 3.0
 
         def put(x, month):
-            row = {'source': 'rtls', 'epc': 'A', 'x': x, '_event_at': datetime.datetime(2026, month, 1)}
+            row = {'source': 'site-a', 'item': 'A', 'x': x, '_event_at': dt.datetime(2026, month, 1)}
             backend.upsert_latest('latest_t', [row], key, cmp)
 
         put(9.0, 2)  # older observation in a later call is ignored
@@ -105,11 +105,11 @@ def test_delete_before_removes_old_rows():
         backend.append_batch(
             't',
             [
-                {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': datetime.datetime(2026, 1, 1)},
-                {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': datetime.datetime(2026, 8, 1)},
+                {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': dt.datetime(2026, 1, 1)},
+                {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': dt.datetime(2026, 8, 1)},
             ],
         )
-        removed = backend.delete_before('t', '_issued_at', datetime.datetime(2026, 6, 1))
+        removed = backend.delete_before('t', '_issued_at', dt.datetime(2026, 6, 1))
         assert removed == 1
         rows = backend.select('SELECT * FROM "t"')
         assert len(rows) == 1
@@ -190,7 +190,7 @@ def test_delete_before_falls_back_where_the_column_is_null():
     backend = DuckDBBackend(':memory:')
     try:
         backend.ensure_table('t', {'id': 'BIGINT', '_event_at': 'TIMESTAMP', '_issued_at': 'TIMESTAMP'}, ('id',))
-        old, new = datetime.datetime(2026, 1, 1), datetime.datetime(2026, 3, 1)
+        old, new = dt.datetime(2026, 1, 1), dt.datetime(2026, 3, 1)
         backend.append_batch(
             't',
             [
@@ -200,7 +200,7 @@ def test_delete_before_falls_back_where_the_column_is_null():
                 {'id': 4, '_event_at': new, '_issued_at': old},  # recent by event time
             ],
         )
-        cutoff = datetime.datetime(2026, 2, 1)
+        cutoff = dt.datetime(2026, 2, 1)
         assert backend.delete_before('t', '_event_at', cutoff) == 1  # NULL is older than no cutoff
         assert backend.delete_before('t', '_event_at', cutoff, fallback='_issued_at') == 1
         assert [row['id'] for row in backend.select('SELECT id FROM "t" ORDER BY id')] == [3, 4]
@@ -219,7 +219,7 @@ def test_upsert_latest_replaces_a_stored_row_with_no_compare_value(run_gap_s):
             cols['_run_start'] = 'TIMESTAMP'
         backend.ensure_table('latest_t', cols, ('id',))
         backend.append_batch('latest_t', [{'id': 1, 'x': 1.0, '_event_at': None}])
-        at = datetime.datetime(2026, 3, 1)
+        at = dt.datetime(2026, 3, 1)
         row = {'id': 1, 'x': 2.0, '_event_at': at}
         backend.upsert_latest('latest_t', [row], ('id',), '_event_at', run_gap_s=run_gap_s)
 

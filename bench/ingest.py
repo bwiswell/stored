@@ -1,7 +1,8 @@
 """Rough ingest-throughput and query-latency benchmark for stored.
 
 Run: ``uv run python bench/ingest.py``. Not a test — a quick, dependency-light
-sanity check on the batched writer and range queries against DuckDB.
+sanity check on the batched writer and range queries against the default SQLite
+backend.
 """
 from __future__ import annotations
 

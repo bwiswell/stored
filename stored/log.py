@@ -1,7 +1,7 @@
 """Logging setup for ``stored``.
 
 Stdlib ``logging`` only — the daemon logs to stdout, which systemd routes to
-journald. No colorlog / rich, per the workspace convention.
+journald. No colorlog / rich: journald wants plain lines, and a library keeps its dependencies few.
 """
 
 from __future__ import annotations

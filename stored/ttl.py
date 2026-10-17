@@ -2,8 +2,8 @@
 
 Unlike zeared's lazy last-value expiry, ``stored`` runs an active sweeper: a
 ``DELETE`` of rows older than each stream's retention horizon. It is invoked on
-demand here (``Store.prune`` / the ``prune`` CLI); periodic scheduling is wired
-into the daemon in M4.
+demand (``Store.prune`` / the ``prune`` CLI) and periodically by the daemon's
+reaper (``prune_interval``).
 
 A stream with a ``time_field`` expires on event time (``_event_at``). A row with
 none (its optional ``time_field`` was unset) has no place on that axis, so it
@@ -20,7 +20,7 @@ from ._time import parse_duration, utcnow
 from .log import get_logger
 
 if TYPE_CHECKING:
-    import datetime
+    import datetime as dt
 
     from .backends.base import StorageBackend
     from .registry import Stream, StreamRegistry
@@ -31,7 +31,7 @@ _log = get_logger('ttl')
 def delete_before_sql(
     table: str,
     column: str,
-    cutoff: datetime.datetime,
+    cutoff: dt.datetime,
     fallback: str | None = None,
 ) -> tuple[str, list[Any]]:
     """The ``DELETE`` that expires ``table``'s rows older than ``cutoff``, and its parameters.

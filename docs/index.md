@@ -10,9 +10,11 @@ the durable, time-keyed history layer beneath `zeared`'s last-value retention.
   type map, meta columns, the payload, dedup, indexes, TTL, and the archival
   roadmap.
 - **[mesh.md](mesh.md)** — the `stored.mesh` layer: `AsyncStore` for services on
-  an event loop, and `Binding` for declaring subscribers and typed queryables.
+  an event loop, `Binding` for declaring subscribers and typed queryables, and
+  `Replayer` for publishing recorded history back onto the mesh.
 - **[chronicler.md](chronicler.md)** — the `stored.zenoh` layer: recording a
-  mesh, serving history transparently, the daemon, CLI, and systemd unit.
+  mesh, serving history transparently, the daemon and its presence, CLI, and
+  systemd unit.
 - **[configuration.md](configuration.md)** — `StoredConfig` / `StreamSpec`, from
   the environment or TOML.
 

@@ -1,8 +1,8 @@
 """An async view of a blocking :class:`~stored.store.Store`.
 
 Every ``stored`` read touches SQLite, which blocks. A service on an event loop
-must therefore hop to a thread for each one — which is why all three consumers
-hand-rolled the same ``_db_call = asyncio.to_thread(...)`` shim. :class:`AsyncStore`
+must therefore hop to a thread for each one — which is why the services built on
+it each hand-rolled the same ``_db_call = asyncio.to_thread(...)`` shim. :class:`AsyncStore`
 is that shim, once: the core stays sync, this wraps it.
 
 Deliberately **not** async: ``register`` (one-time DDL on the open path, before the
@@ -38,9 +38,9 @@ class AsyncStore:
 
     ```python
     store = AsyncStore(stored.Store('history.db', flush_rows=5000))
-    store.register(Location, retention=timedelta(days=3), latest_key=('source', 'epc'))
+    store.register(Location, retention=timedelta(days=3), latest_key=('source', 'item'))
     ...
-    newest = await store.latest(Location, source='rtls', epc=epc)
+    newest = await store.latest(Location, source='site-a', item=item)
     ```
 
     Args:
@@ -65,8 +65,9 @@ class AsyncStore:
 
         Args:
             cls: A ``@s.seared`` / ``@z.zeared`` message class.
-            **spec: As :meth:`stored.Store.register` — ``retention``, ``index``,
-                ``time_field``, ``latest_key``, ``latest_retention``, ``archive``.
+            **spec: As :meth:`stored.Store.register` — ``retention``, ``archive``,
+                ``index``, ``json_index``, ``time_field``, ``latest_key``,
+                ``latest_retention``, ``latest_run_gap``.
 
         Returns:
             The registered :class:`~stored.registry.Stream`.

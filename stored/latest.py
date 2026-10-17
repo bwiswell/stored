@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from . import schema
 
 if TYPE_CHECKING:
-    import datetime
+    import datetime as dt
     from collections.abc import Sequence
 
     from .dialect import Dialect
@@ -40,7 +40,7 @@ class LatestMeta:
             stream keeps no run, or the run began before the projection was counting.
     """
 
-    run_start: datetime.datetime | None = None
+    run_start: dt.datetime | None = None
 
 
 def meta_of(columns: dict[str, Any], *, keeps_runs: bool = True) -> LatestMeta:

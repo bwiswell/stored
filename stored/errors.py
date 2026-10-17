@@ -1,7 +1,16 @@
 """Exception hierarchy for ``stored``.
 
-All errors raised by the package derive from :class:`StoredError`, so callers
-can ``except StoredError`` to catch anything the persistence layer throws.
+Every error ``stored`` raises itself derives from :class:`StoredError`. Two
+come through from its dependencies instead, unwrapped:
+
+- ``seared.ValidationError`` from a read, when a stored row no longer loads
+  into its class (a field retyped lossily since it was written, or a required
+  field added);
+- ``zeared.TopicError`` when a class is first subscribed or served, when its
+  ``TOPIC`` can't be used (a ``Path`` or base64 ``Bytes`` single-segment slot).
+
+A batch the writer fails to flush is logged and dropped, not raised: the
+writer thread must outlive one bad batch.
 """
 
 from __future__ import annotations
@@ -27,10 +36,6 @@ class BackendError(StoredError):
     """The storage backend failed (connect, DDL, read, or write)."""
 
 
-class WriterError(StoredError):
-    """The batched writer failed to buffer or flush rows."""
-
-
 class QueryError(StoredError):
     """A history query could not be planned or executed."""
 
@@ -42,5 +47,4 @@ __all__ = [
     'RegistrationError',
     'SchemaError',
     'StoredError',
-    'WriterError',
 ]

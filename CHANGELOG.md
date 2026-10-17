@@ -51,11 +51,32 @@ starts.
 - **Breaking:** `replay()` checks its destination before reading anything, and a `topic=` the class can't publish on
   (undeclared, subscribe-only, or with a slot the class doesn't declare) raises `ConfigError`, as its docstring
   said. It raised zeared's `TopicError` at the first row, or returned 0 for an empty window.
+- **The README gains *Upgrading to 0.4.0*,** which lists each break with what to do.
+- **The docs say what the code does.** Among the corrections:
+  - the `[zenoh]` table's keys are listed, zeared 0.4's four included, with what the docs didn't say: an unknown key
+    is dropped without a word, `validate-config` doesn't check the table, and neither it nor `streams` is read from
+    the environment, so `run` needs the TOML;
+  - a stored row stops loading after a lossy retype or a new required field, where the docs called retyped fields
+    readable;
+  - a `time_field` that may arrive as `null` should be `X | None` with `default=None`, since a real default records
+    1970;
+  - a `RETAINED` class's history is served through a `Binding` with a reply class of its own, where the docs had a
+    contract for it on the roadmap, and serving the read primitives over the mesh is the `Binding`'s job, not the
+    consumer's;
+  - SQLite is the default backend in the docstrings and the archival plan, which had called DuckDB the default;
+  - the request sentinel policy under seared's null rule, and the APIs the docs left out: `cursor=`, `max_limit=`,
+    `query_page`, `counts` and the `ReplayHandle`.
+- **The systemd unit template no longer sets `STORED_LOG_LEVEL`,** which `stored -c` never read: under `-c` the
+  config comes from the TOML alone, so the level is its `log_level`.
+- **The examples and docstrings use no particular fleet's vocabulary,** and point at nothing outside the repository.
+- **The tests mirror every module,** and the ones meant for both engines run on DuckDB too, where they had run
+  SQLite twice.
 - **seared and zeared are pinned to release tags,** seared `v0.4.0` and zeared `v0.4.1`, and the declared ranges
   rise to `seared>=0.4.0,<0.5` and `zeared>=0.4.1,<0.5`. zeared 0.4.1 is the floor because a query whose reply fails
   ends at once there; on 0.4.0 it stayed open until the serving process next collected garbage.
-- **Dependencies:** the lockfile resolves seared 0.4.0 (was 0.3.4) and zeared 0.4.1 (was 0.3.13). Nothing else
-  moves.
+- **Dependencies:** the lockfile resolves seared 0.4.0 (was 0.3.4) and zeared 0.4.1 (was 0.3.13). The dev group's
+  `pytest` range lifts to `>=8.0,<10.0`, and the refreshed lockfile resolves pytest 9.1.1 and ruff 0.17.1, whose
+  import convention the code now follows (`import datetime as dt`). Nothing else moves.
 
 ### Fixed
 
@@ -81,6 +102,14 @@ starts.
   neither older nor newer, no later record replaced it: `latest()` went on answering with it, and it never expired.
   It now stays out, as `iter` and paging already skip it, so an entity with only such rows has no `latest()`. One a
   projection already holds yields to the entity's first timed record, which also starts its run. Since 0.2.0.
+- **`archive` reaches the registry.** `run`, `migrate` and `prune` registered a stream without the `archive` horizon
+  its config gave, though the docs said they register every field. Archival is still to come, so only the registry
+  records it.
+
+### Removed
+
+- **Breaking:** `stored.WriterError`. Nothing raised it: a batch the writer fails to flush is logged and dropped, so
+  the writer thread outlives it.
 
 ## 0.3.5 — 2026-10-16
 

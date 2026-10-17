@@ -1,13 +1,13 @@
 """The core-local ``stored.row.Meta`` Protocol must track zeared's real ``ZenohMeta``.
 
-The core mirrors ``ZenohMeta`` structurally (plan 02 Stage 3) without importing
+The core mirrors ``ZenohMeta`` structurally, without importing
 it, so ``build_row`` reads its attributes directly. This exercises a *real*
 ``ZenohMeta`` through that path, so an upstream field rename surfaces here.
 """
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 
 import seared as s
 from zeared import ZenohMeta
@@ -25,7 +25,7 @@ def test_real_zenoh_meta_flows_through_build_row():
     meta = ZenohMeta(
         key_expr='robot/1/telemetry',
         timestamp='abcd1234abcd1234/01',
-        issued_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        issued_at=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
         source_info='peerA',
         schema='1',
     )

@@ -144,7 +144,7 @@ class Store:
             time_field: A payload field naming the **domain event time** — retention
                 and range queries key off it instead of the mesh delivery time.
             latest_key: Field names forming a **latest-per-key** projection's logical
-                key (e.g. ``('source', 'epc')``). When set, a ``latest_<name>`` table
+                key (e.g. ``('source', 'item')``). When set, a ``latest_<name>`` table
                 keeps one newest-wins row per key, read via :meth:`latest`.
             latest_retention: Retention horizon for the latest projection (usually
                 longer than ``retention``, same forms), or ``None`` to keep forever.
@@ -342,7 +342,7 @@ class Store:
           keeps draining. Rows recorded mid-walk that sort *after* the current
           position will be yielded; the keyset anchor guarantees no row is yielded
           twice and none is skipped.
-        - **Rows with no event time are skipped.** A nullable ``time_field`` that
+        - **Rows with no event time are skipped.** An optional ``time_field`` that
           arrived unset has no place on the temporal axis the walk resumes along.
           :meth:`query` still returns them within an unbounded window.
 
@@ -716,8 +716,8 @@ class Store:
 
         A key field may name a **set** of values (a list, tuple or set) instead of one:
         the answer is then the newest across every entity the key matches — for one
-        thing that is recorded under more than one key, such as a tag re-encoded to a
-        second EPC. An empty set matches nothing.
+        thing that is recorded under more than one key, such as an item relabelled
+        under a second id. An empty set matches nothing.
 
         Args:
             cls: A registered class with a latest projection.

@@ -12,11 +12,11 @@ config layer.
 | `db_path`        | `str`             | `chronicle.db`      | Backing database file.                 |
 | `backend`        | `str`             | `sqlite`            | `duckdb` (via `stored[duckdb]`); `postgres` later. |
 | `streams`        | `list[StreamSpec]`| `[]`                | What to record and serve.              |
-| `zenoh`          | `dict`            | `{}`                | Mapped onto `zeared.SessionConfig`.    |
+| `zenoh`          | `dict`            | `{}`                | Mapped onto `zeared.SessionConfig`; see [the `[zenoh]` table](#the-zenoh-table). |
 | `flush_rows`     | `int`             | `1000`              | Writer flush threshold (rows).         |
 | `flush_secs`     | `float`           | `1.0`               | Writer flush interval (`0` disables).  |
 | `prune_interval` | `float`           | `300.0`             | TTL sweep interval (`0` disables).     |
-| `log_level`      | `str`             | `INFO`              | Root logging level.                    |
+| `log_level`      | `str`             | `INFO`              | Root logging level. Under `-c` it comes from the TOML, like everything else. |
 
 ## `StreamSpec`
 
@@ -35,7 +35,10 @@ config layer.
 
 Scalar fields are read as `STORED_<FIELD>` (e.g. `STORED_IDENTITY`,
 `STORED_DB_PATH`, `STORED_PRUNE_INTERVAL`). The `streams` list is **not**
-env-mapped — supply it via TOML (nested-list env nesting is out of scope).
+env-mapped — supply it via TOML (nested-list env nesting is out of scope) — and
+nor is the `zenoh` table. So `run` needs the TOML: an environment-only config has
+no `mode` for the session. `validate-config`, `migrate` and `prune` open no
+session and run without one.
 
 ```sh
 export STORED_IDENTITY=chronicler-1
@@ -54,19 +57,42 @@ mode = "client"
 router = "tcp/router:7447"
 
 [[streams]]
-cls = "rio_protocol.messages:RawRead"
+cls = "myapp.messages:Reading"
 retention = "7d"
-index = ["reader_id"]
+index = ["sensor_id"]
 
 [[streams]]
-cls = "rio_protocol.messages:Location"
+cls = "myapp.messages:Position"
 retention = "48h"
 time_field = "observed_at"   # prune/range by domain event time, not mesh delivery time
 
   [streams.latest]           # keep a newest-per-key projection (durable last-known)
-  key = ["source", "epc"]    # the logical entity key
+  key = ["source", "item"]   # the logical entity key
   retention = "30d"          # outlives the 48h history
 ```
 
 Load precedence: `stored -c <file>` reads the TOML; otherwise config comes from
-the environment. The `zenoh` table must include `mode` (`peer` or `client`).
+the environment. The two don't layer: with `-c`, no `STORED_*` variable is read.
+
+## The `[zenoh]` table
+
+The table is loaded as a `zeared.SessionConfig` (`SessionConfig.load`), and the
+session opened with `zeared.open`, timestamping on. Its keys:
+
+| Key                  | Default    | Notes |
+|----------------------|------------|-------|
+| `mode`               | (required) | `peer` or `client`. |
+| `router`             | —          | Client shortcut: the sole `connect` endpoint when `connect` is empty. |
+| `connect`, `listen`  | `[]`       | Endpoint lists, e.g. `["tcp/router:7447"]`. |
+| `retry`              | `false`    | Retry the first open with exponential backoff, from `initial_backoff` (`0.1` s) doubling to `max_backoff` (`30.0` s), giving up after `max_attempts` if set. |
+| `auto_reconnect`     | `false`    | Open a `zeared.ManagedSession`: it reconnects a dead session, watches its router link, re-fetches retained values when the link comes back, and keeps the daemon's presence token across a reconnect. |
+| `probe_interval`     | `10.0`     | Seconds between the managed session's health and link checks. |
+| `resync_jitter`      | `2.0`      | After the link comes back, wait up to this many seconds before re-fetching retained values, so a fleet doesn't fetch at once. |
+| `resync_concurrency` | `4`        | At most this many re-fetches at a time. |
+| `zenoh_config_file`  | —          | A JSON5 Zenoh config, for what `SessionConfig` doesn't model: TLS, access control, scouting. |
+| `zenoh_overrides`    | `{}`       | JSON5 fragments keyed by config path, applied last, e.g. `"scouting/multicast/enabled" = false`. Don't turn timestamping off here: the chronicler dedups and orders on it. |
+
+`auto_reconnect`, `probe_interval`, `resync_jitter` and `resync_concurrency` are new
+in zeared 0.4. A key the table doesn't know is dropped without a word, and `validate-config` doesn't load the table, so
+check a key against this list (or zeared's `SessionConfig`) when it seems to do
+nothing.

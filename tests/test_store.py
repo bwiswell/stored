@@ -1,10 +1,22 @@
-import datetime
+import datetime as dt
 
 import pytest
 import seared as s
 
 from stored import Store
 from stored.errors import ConfigError, QueryError, RegistrationError
+
+
+@pytest.fixture(params=['sqlite', 'duckdb'])
+def backend(request):
+    """Each engine, for the tests worth proving on both: DuckDB when the extra is installed."""
+    if request.param == 'duckdb':
+        pytest.importorskip('duckdb')
+    return request.param
+
+
+def _open(tmp_path, backend, **options):
+    return Store(str(tmp_path / f'c.{backend}'), backend=backend, **options)
 
 
 @s.seared
@@ -21,7 +33,7 @@ class Obs(s.Seared):
 
 
 @s.seared
-class Nullable(s.Seared):
+class OptionalTime(s.Seared):
     id: int = s.Int(required=True)
     observed_at: float | None = s.Float(default=None)
 
@@ -44,7 +56,7 @@ class FixedMeta:
 
 
 def test_register_creates_stream(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'))
+    store = Store(str(tmp_path / 'c.db'))
     try:
         stream = store.register(Msg, retention='1d', index=('id',))
         assert stream.table == 'stream_msg'
@@ -54,11 +66,11 @@ def test_register_creates_stream(tmp_path):
 
 
 def test_register_accepts_seconds_and_timedeltas(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'))
+    store = Store(str(tmp_path / 'c.db'))
     try:
         stream = store.register(
             Obs,
-            retention=datetime.timedelta(hours=36),
+            retention=dt.timedelta(hours=36),
             time_field='observed_at',
             latest_key=('id',),
             latest_retention=90 * 86400,
@@ -70,7 +82,7 @@ def test_register_accepts_seconds_and_timedeltas(tmp_path):
 
 
 def test_register_rejects_bad_horizon_units(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         with pytest.raises(ConfigError):
             store.register(Msg, retention=-5)
@@ -80,7 +92,7 @@ def test_register_rejects_bad_horizon_units(tmp_path):
 
 def test_reads_return_the_queried_class(tmp_path):
     """``query``/``latest`` answer with ``cls`` itself — the contract ``ty`` is told about."""
-    store = Store(str(tmp_path / 'c.duckdb'))
+    store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Obs, time_field='observed_at', latest_key=('id',))
         store.record(Obs, Obs(id=1, observed_at=1000.0))
@@ -95,7 +107,7 @@ def test_reads_return_the_queried_class(tmp_path):
 
 
 def test_record_and_query_round_trip(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'))
+    store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Msg, index=('id',))
         store.record(Msg, Msg(id=1, name='a'))
@@ -109,7 +121,7 @@ def test_record_and_query_round_trip(tmp_path):
 
 
 def test_query_field_filter(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'))
+    store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Msg, index=('id',))
         store.record(Msg, Msg(id=1, name='a'))
@@ -123,7 +135,7 @@ def test_query_field_filter(tmp_path):
 
 
 def test_query_limit_and_order(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'))
+    store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Msg)
         for i in range(5):
@@ -141,7 +153,7 @@ def test_query_range_keys_on_event_time(tmp_path):
     store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Obs, index=('id',), time_field='observed_at')
-        now = datetime.datetime.now(datetime.UTC).timestamp()
+        now = dt.datetime.now(dt.UTC).timestamp()
         store.record(Obs, Obs(id=1, observed_at=now - 7200))  # 2h ago
         store.record(Obs, Obs(id=2, observed_at=now - 60))  # 1m ago
 
@@ -155,7 +167,7 @@ def test_latest_returns_newest_per_key(tmp_path):
     store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
-        now = datetime.datetime.now(datetime.UTC).timestamp()
+        now = dt.datetime.now(dt.UTC).timestamp()
         store.record(Obs, Obs(id=1, observed_at=now - 100))
         store.record(Obs, Obs(id=1, observed_at=now))  # newest for id=1
         store.record(Obs, Obs(id=1, observed_at=now - 50))  # out of order, older -> ignored
@@ -172,7 +184,7 @@ def test_counts_reports_history_and_latest(tmp_path):
     store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
-        now = datetime.datetime.now(datetime.UTC).timestamp()
+        now = dt.datetime.now(dt.UTC).timestamp()
         store.record(Obs, Obs(id=1, observed_at=now - 10))
         store.record(Obs, Obs(id=1, observed_at=now))  # 2 history rows, 1 latest entity
         store.record(Obs, Obs(id=2, observed_at=now))
@@ -198,7 +210,7 @@ def test_prune_flushes_pending_writes_first(tmp_path):
     store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(Obs, time_field='observed_at', retention='1d')
-        old = datetime.datetime.now(datetime.UTC).timestamp() - 10 * 365 * 86400
+        old = dt.datetime.now(dt.UTC).timestamp() - 10 * 365 * 86400
         store.record(Obs, Obs(id=1, observed_at=old))  # buffered, not yet flushed
         assert store.prune() == 1  # prune flushes first, then sweeps the stale row
     finally:
@@ -226,7 +238,7 @@ def test_latest_wrong_key_raises(tmp_path):
 
 
 def test_record_is_idempotent_on_primary_key(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'))
+    store = Store(str(tmp_path / 'c.db'))
     try:
         store.register(Msg)
         store.record(Msg, Msg(id=1), meta=FixedMeta())
@@ -253,7 +265,7 @@ class _CountingBackend:
 
 def _filled(tmp_path, count, **register):
     """A store holding ``count`` Msg rows, writer already drained."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     store.register(Msg, index=('id',), **register)
     for i in range(count):
         store.record(Msg, Msg(id=i, name=f'n{i}'))
@@ -307,7 +319,7 @@ def test_iter_agrees_with_query(tmp_path):
 
 def test_iter_flushes_at_open(tmp_path):
     """Pending writes are visible without an explicit flush — and flushed on the call."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(Msg, index=('id',))
         store.record(Msg, Msg(id=1, name='buffered'))
@@ -319,38 +331,35 @@ def test_iter_flushes_at_open(tmp_path):
 
 
 def test_iter_skips_rows_with_no_event_time(tmp_path):
-    """A nullable ``time_field`` left unset has no place on the axis the walk resumes along."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    """An optional ``time_field`` left unset has no place on the axis the walk resumes along."""
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
-        store.register(Nullable, time_field='observed_at', index=('id',))
-        store.record(Nullable, Nullable(id=1, observed_at=1000.0))
-        store.record(Nullable, Nullable(id=2))  # no event time
+        store.register(OptionalTime, time_field='observed_at', index=('id',))
+        store.record(OptionalTime, OptionalTime(id=1, observed_at=1000.0))
+        store.record(OptionalTime, OptionalTime(id=2))  # no event time
         store.flush()
 
-        assert [n.id for n in store.iter(Nullable, chunk=1)] == [1]
-        assert {n.id for n in store.query(Nullable)} == {1, 2}  # query still returns it
+        assert [n.id for n in store.iter(OptionalTime, chunk=1)] == [1]
+        assert {n.id for n in store.query(OptionalTime)} == {1, 2}  # query still returns it
     finally:
         store.close()
 
 
-@pytest.mark.parametrize('backend', ['sqlite', 'duckdb'])
 def test_a_row_with_no_event_time_stays_out_of_the_projection(tmp_path, backend):
     # It has no place on the axis the projection is newest on. Until 0.4.0 it went in,
     # and then no timed record could replace it: NULL compared as neither older nor newer.
-    if backend == 'duckdb':
-        pytest.importorskip('duckdb')
-    store = Store(str(tmp_path / f'c.{backend}'), backend=backend, flush_secs=0)
+    store = _open(tmp_path, backend, flush_secs=0)
     try:
-        store.register(Nullable, index=('id',), time_field='observed_at', latest_key=('id',))
-        store.record(Nullable, Nullable(id=1))
+        store.register(OptionalTime, index=('id',), time_field='observed_at', latest_key=('id',))
+        store.record(OptionalTime, OptionalTime(id=1))
         store.flush()
-        assert store.latest(Nullable, id=1) is None
+        assert store.latest(OptionalTime, id=1) is None
 
-        store.record(Nullable, Nullable(id=1, observed_at=1000.0))
-        store.record(Nullable, Nullable(id=1))  # nor does a later one displace a timed row
+        store.record(OptionalTime, OptionalTime(id=1, observed_at=1000.0))
+        store.record(OptionalTime, OptionalTime(id=1))  # nor does a later one displace a timed row
         store.flush()
-        assert store.latest(Nullable, id=1) == Nullable(id=1, observed_at=1000.0)
-        assert store.counts(Nullable) == (3, 1)  # history keeps all three
+        assert store.latest(OptionalTime, id=1) == OptionalTime(id=1, observed_at=1000.0)
+        assert store.counts(OptionalTime) == (3, 1)  # history keeps all three
     finally:
         store.close()
 
@@ -367,7 +376,7 @@ def test_iter_rejects_bad_paging_arguments(tmp_path):
 
 
 def test_register_creates_secondary_indexes(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(Obs, time_field='observed_at', index=('id',))
         names = {
@@ -406,7 +415,7 @@ def test_iter_and_indexes_on_the_duckdb_backend(tmp_path):
 
 def _population(tmp_path, count=6):
     """A store whose latest projection holds one row per entity."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
     for i in range(count):
         store.record(Obs, Obs(id=i, observed_at=1000.0 + i))
@@ -439,7 +448,7 @@ def test_query_latest_filters_and_caps(tmp_path):
 
 def test_query_latest_window_means_last_seen(tmp_path):
     """``since`` on the projection asks when the entity was last seen, not when it was recorded."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
         store.record(Obs, Obs(id=1, observed_at=1000.0))  # stale entity
@@ -467,7 +476,7 @@ def test_iter_latest_pages_through_the_population(tmp_path):
 
 
 def test_projection_reads_need_a_projection(tmp_path):
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(Msg, index=('id',))  # no latest_key
         with pytest.raises(ConfigError, match='needs a latest projection'):
@@ -480,7 +489,7 @@ def test_projection_reads_need_a_projection(tmp_path):
 
 def test_projection_is_indexed_for_the_queries_that_read_it(tmp_path):
     """A filtered snapshot should not scan — and a dimension the entity key leads needs no index."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(Obs, index=('id', 'label'), time_field='observed_at', latest_key=('id',))
         names = {
@@ -501,7 +510,7 @@ def test_projection_is_indexed_for_the_queries_that_read_it(tmp_path):
 
 def _zoned(tmp_path):
     """Four entities across three zones, recorded twice each."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     store.register(
         Zoned,
         index=('id',),
@@ -577,7 +586,7 @@ def test_path_filter_rejects_an_undeclared_path(tmp_path):
 
 def test_missing_key_simply_does_not_match(tmp_path):
     """A row whose dict lacks the key is absent from the result, not an error."""
-    store = Store(str(tmp_path / 'c.duckdb'), flush_secs=0)
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
         store.register(Zoned, index=('id',), time_field='observed_at', json_index=('zones.department',))
         store.record(Zoned, Zoned(id=1, zones={'aisle': 3}, observed_at=1000.0))  # no department
@@ -620,7 +629,7 @@ def test_declared_paths_are_indexed_on_both_tables(tmp_path):
 
 
 def test_a_path_filter_actually_uses_its_index(tmp_path):
-    """The whole point of Stage 4: declared, emitted — and *chosen* by the planner."""
+    """The whole point of a path index: declared, emitted — and *chosen* by the planner."""
     store = _zoned(tmp_path)
     stream = store.registry.get(Zoned)
     try:
@@ -714,9 +723,8 @@ def test_query_latest_page_walks_current_state(tmp_path):
 # -- membership: one thing recorded under several keys ------------------------
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_a_set_valued_filter_matches_any_member(tmp_path, db):
-    store = Store(str(tmp_path / db), flush_secs=0)
+def test_a_set_valued_filter_matches_any_member(tmp_path, backend):
+    store = _open(tmp_path, backend, flush_secs=0)
     try:
         store.register(Obs, index=('id',), time_field='observed_at')
         for i in range(4):
@@ -737,10 +745,9 @@ def test_a_set_valued_path_filter_matches_any_member(tmp_path):
         store.close()
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_latest_across_several_keys_is_the_newest_of_them(tmp_path, db):
-    """One thing recorded under two keys — a tag re-encoded to a second EPC — answers as one."""
-    store = Store(str(tmp_path / db), flush_secs=0)
+def test_latest_across_several_keys_is_the_newest_of_them(tmp_path, backend):
+    """One thing recorded under two keys — an item relabelled under a second id — answers as one."""
+    store = _open(tmp_path, backend, flush_secs=0)
     try:
         store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
         store.record(Obs, Obs(id=1, observed_at=1000.0, label='before'))
@@ -759,14 +766,14 @@ def test_latest_across_several_keys_is_the_newest_of_them(tmp_path, db):
 # -- runs: when an entity's current run of records began -----------------------
 
 
-def _run_store(tmp_path, db, gap='1h'):
-    store = Store(str(tmp_path / db), flush_secs=0)
+def _run_store(tmp_path, backend, gap='1h'):
+    store = _open(tmp_path, backend, flush_secs=0)
     store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',), latest_run_gap=gap)
     return store
 
 
 def _utc(seconds):
-    return datetime.datetime.fromtimestamp(seconds, datetime.UTC).replace(tzinfo=None)
+    return dt.datetime.fromtimestamp(seconds, dt.UTC).replace(tzinfo=None)
 
 
 def _run_start(store, entity=1):
@@ -788,9 +795,8 @@ def test_a_run_gap_needs_an_entity_and_a_positive_length(tmp_path):
         store.close()
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_a_run_starts_with_the_first_record_and_holds_within_the_gap(tmp_path, db):
-    store = _run_store(tmp_path, db)
+def test_a_run_starts_with_the_first_record_and_holds_within_the_gap(tmp_path, backend):
+    store = _run_store(tmp_path, backend)
     try:
         store.record(Obs, Obs(id=1, observed_at=1000.0))
         store.flush()
@@ -803,9 +809,8 @@ def test_a_run_starts_with_the_first_record_and_holds_within_the_gap(tmp_path, d
         store.close()
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_a_silence_longer_than_the_gap_starts_a_new_run(tmp_path, db):
-    store = _run_store(tmp_path, db)
+def test_a_silence_longer_than_the_gap_starts_a_new_run(tmp_path, backend):
+    store = _run_store(tmp_path, backend)
     try:
         store.record(Obs, Obs(id=1, observed_at=1000.0))
         store.flush()
@@ -816,9 +821,8 @@ def test_a_silence_longer_than_the_gap_starts_a_new_run(tmp_path, db):
         store.close()
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_a_late_record_extends_a_run_backwards_but_never_resets_it(tmp_path, db):
-    store = _run_store(tmp_path, db)
+def test_a_late_record_extends_a_run_backwards_but_never_resets_it(tmp_path, backend):
+    store = _run_store(tmp_path, backend)
     try:
         store.record(Obs, Obs(id=1, observed_at=10_000.0, label='newest'))
         store.flush()
@@ -836,9 +840,8 @@ def test_a_late_record_extends_a_run_backwards_but_never_resets_it(tmp_path, db)
         store.close()
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_runs_are_per_entity(tmp_path, db):
-    store = _run_store(tmp_path, db)
+def test_runs_are_per_entity(tmp_path, backend):
+    store = _run_store(tmp_path, backend)
     try:
         store.record(Obs, Obs(id=1, observed_at=1000.0))
         store.record(Obs, Obs(id=2, observed_at=5000.0))
@@ -848,15 +851,13 @@ def test_runs_are_per_entity(tmp_path, db):
         store.close()
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_a_row_from_before_runs_were_kept_reads_unknown_until_a_run_starts(tmp_path, db):
-    path = str(tmp_path / db)
-    store = Store(path, flush_secs=0)
+def test_a_row_from_before_runs_were_kept_reads_unknown_until_a_run_starts(tmp_path, backend):
+    store = _open(tmp_path, backend, flush_secs=0)
     store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
     store.record(Obs, Obs(id=1, observed_at=1000.0))
     store.close()
 
-    store = Store(path, flush_secs=0)  # reopened, now keeping runs: the column is added
+    store = _open(tmp_path, backend, flush_secs=0)  # reopened, now keeping runs: the column is added
     store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',), latest_run_gap='1h')
     try:
         assert _run_start(store) is None  # began before anyone was counting
@@ -870,19 +871,15 @@ def test_a_row_from_before_runs_were_kept_reads_unknown_until_a_run_starts(tmp_p
         store.close()
 
 
-@pytest.mark.parametrize('backend', ['sqlite', 'duckdb'])
 def test_a_stream_registered_again_without_its_gap_reads_no_run_start(tmp_path, backend):
     # Until 0.3.5 the old run start kept coming back: registering without
     # `latest_run_gap` stops the upsert updating `_run_start`, but the column stays.
-    if backend == 'duckdb':
-        pytest.importorskip('duckdb')
-    path = str(tmp_path / f'c.{backend}')
-    store = Store(path, backend=backend, flush_secs=0)
+    store = _open(tmp_path, backend, flush_secs=0)
     store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',), latest_run_gap='1h')
     store.record(Obs, Obs(id=1, observed_at=1000.0))
     store.close()
 
-    store = Store(path, backend=backend, flush_secs=0)  # reopened, no longer keeping runs
+    store = _open(tmp_path, backend, flush_secs=0)  # reopened, no longer keeping runs
     store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
     try:
         store.record(Obs, Obs(id=1, observed_at=1000.0 + 3 * 86_400))
@@ -913,9 +910,8 @@ def test_a_stream_keeping_no_run_reads_none_and_the_plain_reads_are_unchanged(tm
         store.close()
 
 
-@pytest.mark.parametrize('db', ['c.db', 'c.duckdb'])
-def test_every_latest_read_has_a_with_meta_twin_returning_the_same_rows(tmp_path, db):
-    store = _run_store(tmp_path, db)
+def test_every_latest_read_has_a_with_meta_twin_returning_the_same_rows(tmp_path, backend):
+    store = _run_store(tmp_path, backend)
     try:
         for i, at in enumerate([1000.0, 2000.0, 3000.0]):
             store.record(Obs, Obs(id=i, observed_at=at))

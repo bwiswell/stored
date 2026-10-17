@@ -3,16 +3,16 @@
 A queryable answers *one asker*. A **replay** re-publishes what was recorded so
 that any number of ordinary subscribers see it through their ordinary
 ``on_message`` path — which is what lets a pipeline stage be fed a historical
-window with no client code at all: re-run yesterday through the collator, warm a
+window with no client code at all: re-run yesterday through a pipeline stage, warm a
 cache after a restart, drive a lab run from real recorded traffic.
 
 **Where a replay lands.** Zeared publishes on *declared* templates only, so a
 replayable class declares its replay scope in ``EXTRA_TOPICS``:
 
 ```python
-class Location(zeared.Message):
-    TOPIC = 'rio/telemetry/location/{source}'
-    EXTRA_TOPICS = ('rio/replay/telemetry/location/{source}',)
+class Reading(zeared.Message):
+    TOPIC = 'live/reading/{source}'
+    EXTRA_TOPICS = ('replay/reading/{source}',)
 ```
 
 That single declaration carries the whole isolation story. Subscribers of the
@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
+import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 import zeared as z
@@ -60,10 +60,10 @@ def _event_seconds(value: Any) -> float | None:
     """Read a ``time_field`` value as unix seconds, or ``None`` when it has no time."""
     if value is None:
         return None
-    if isinstance(value, datetime.datetime):
-        return value.replace(tzinfo=value.tzinfo or datetime.UTC).timestamp()
-    if isinstance(value, datetime.date):
-        return datetime.datetime(value.year, value.month, value.day, tzinfo=datetime.UTC).timestamp()
+    if isinstance(value, dt.datetime):
+        return value.replace(tzinfo=value.tzinfo or dt.UTC).timestamp()
+    if isinstance(value, dt.date):
+        return dt.datetime(value.year, value.month, value.day, tzinfo=dt.UTC).timestamp()
     return float(value)
 
 

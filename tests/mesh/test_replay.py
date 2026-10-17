@@ -40,7 +40,7 @@ def _filled(count: int = 6, *, step: float = 1.0):
     store = AsyncStore(stored.Store(':memory:', flush_secs=0))
     store.register(Reading, index=('source',), time_field='observed_at')
     for i in range(count):
-        store.record(Reading, Reading(source='rtls', value=float(i), observed_at=1000.0 + i * step))
+        store.record(Reading, Reading(source='site-a', value=float(i), observed_at=1000.0 + i * step))
     store.store.flush()
     return store
 
@@ -58,7 +58,7 @@ async def test_replay_reaches_an_ordinary_subscriber(session):
 
         assert sent == 6
         assert [r.value for r in seen] == [float(i) for i in range(6)]
-        assert {r.source for r in seen} == {'rtls'}
+        assert {r.source for r in seen} == {'site-a'}
     finally:
         sub.close()
         await store.close()
@@ -76,7 +76,7 @@ async def test_replay_is_not_re_recorded_by_a_live_only_recorder(session):
         await _settle()
 
         # Live traffic is recorded…
-        Reading(source='rtls', value=99.0, observed_at=2000.0).send()
+        Reading(source='site-a', value=99.0, observed_at=2000.0).send()
         await _settle()
         assert [r.value for r in await sink.query(Reading)] == [99.0]
 
@@ -215,7 +215,7 @@ def _with_a_keyless_row(count: int = 6, bad: int = 2):
     store = AsyncStore(stored.Store(':memory:', flush_secs=0))
     store.register(Reading, index=('source',), time_field='observed_at')
     for i in range(count):
-        source = 'x/y' if i == bad else 'rtls'
+        source = 'x/y' if i == bad else 'site-a'
         store.record(Reading, Reading(source=source, value=float(i), observed_at=1000.0 + i))
     store.store.flush()
     return store
