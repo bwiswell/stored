@@ -12,3 +12,12 @@ class Beacon(z.Message):
     TOPIC = 'beacon/{id}'
     id: int = z.Int(required=True)
     v: int = z.Int(default=0)
+
+
+@z.zeared
+class Sighting(z.Message):
+    """Carries its own event time, for a stream configured with ``time_field``."""
+
+    TOPIC = 'sighting/{id}'
+    id: int = z.Int(required=True)
+    at: float = z.Float(required=True)

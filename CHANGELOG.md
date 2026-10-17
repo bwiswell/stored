@@ -39,6 +39,14 @@ lines as it lands, and the entry is dated when that version is released.
 - **Dependencies:** the lockfile resolves seared 0.3.4 (was 0.3.2) and zeared 0.3.13 (was 0.3.7). It is the suite's
   first run against zeared 0.3.8 to 0.3.13, and nothing stored relies on changed.
 
+### Fixed
+
+- **`stored run` applies a stream's whole spec.** The daemon registered each configured stream with its retention
+  and indexes only, so a `time_field` and a `[streams.latest]` projection did nothing under `run`: the reaper
+  pruned on delivery time, and no projection was kept. `migrate` and `prune` applied them, so the three disagreed.
+  All three now register through one function, `stored.streams.register_stream`. Since 0.2.0.
+- `docs/configuration.md`'s stream table gains the `latest` row it had left out.
+
 ## 0.3.4 — 2026-10-03
 
 **Per-field sentinel policies for bindings.** A request whose fields spell "not provided" in different ways can say
