@@ -198,6 +198,68 @@ async def test_replay_needs_a_destination_it_can_justify(session):
         await store.close()
 
 
+async def test_replay_refuses_a_topic_it_cannot_publish_on(session):
+    """Found before anything is read, so it can't pass for a replay that skips every row."""
+    zeared.session = session
+    store = _filled(2)
+    try:
+        replayer = Replayer(store, session=session)
+        with pytest.raises(ConfigError, match='cannot publish on'):
+            await replayer.replay(Reading, topic='elsewhere/reading/{source}')
+    finally:
+        await store.close()
+
+
+def _with_a_keyless_row(count: int = 6, bad: int = 2):
+    """Rows 0..count-1, where row ``bad``'s ``source`` holds a ``/`` and has no key to go out on."""
+    store = AsyncStore(stored.Store(':memory:', flush_secs=0))
+    store.register(Reading, index=('source',), time_field='observed_at')
+    for i in range(count):
+        source = 'x/y' if i == bad else 'rtls'
+        store.record(Reading, Reading(source=source, value=float(i), observed_at=1000.0 + i))
+    store.store.flush()
+    return store
+
+
+@pytest.mark.parametrize(
+    'options',
+    [
+        pytest.param({}, id='one-page'),
+        pytest.param({'chunk': 2}, id='paged'),
+        pytest.param({'max_rate': 200.0}, id='paced'),
+    ],
+)
+async def test_a_row_with_no_key_is_skipped_not_fatal(session, options, caplog):
+    zeared.session = session
+    store = _with_a_keyless_row()
+    seen: list[Reading] = []
+    sub = Reading.on_message(seen.append, session=session)
+    progress: dict[str, int] = {'sent': 0}
+    try:
+        await _settle()
+        sent = await Replayer(store, session=session).replay(Reading, progress=progress, **options)
+        await _settle()
+
+        assert sent == 5
+        assert progress == {'sent': 5, 'skipped': 1}
+        assert [r.value for r in seen] == [0.0, 1.0, 3.0, 4.0, 5.0]
+        assert 'skipped 1 row(s)' in caplog.text
+    finally:
+        sub.close()
+        await store.close()
+
+
+async def test_the_handle_counts_skipped_rows(session):
+    zeared.session = session
+    store = _with_a_keyless_row(4, bad=0)
+    try:
+        handle = Replayer(store, session=session).start(Reading)
+        assert await handle.wait() == 3
+        assert (handle.sent, handle.skipped) == (3, 1)
+    finally:
+        await store.close()
+
+
 async def test_pacing_requires_an_event_time(session):
     zeared.session = session
     store = AsyncStore(stored.Store(':memory:', flush_secs=0))

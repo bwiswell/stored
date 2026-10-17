@@ -16,7 +16,7 @@ dependencies = [
     # ``msgpack`` arrive transitively. The seared-only *core* still imports no
     # zeared at runtime (the top-level ``Chronicler`` re-export is lazy), so a
     # Store-only ``import stored`` stays transport-free at import time.
-    "zeared>=0.4.0,<0.5",
+    "zeared>=0.4.1,<0.5",
 ]
 
 [project.scripts]
@@ -55,7 +55,7 @@ dev = [
 # unpushed change, point a source at the sibling checkout locally:
 #   seared = { path = "../seared", editable = true }
 seared = { git = "https://github.com/bwiswell/seared", tag = "v0.4.0" }
-zeared = { git = "https://github.com/bwiswell/zeared", tag = "v0.4.0" }
+zeared = { git = "https://github.com/bwiswell/zeared", tag = "v0.4.1" }
 
 [build-system]
 requires = ["hatchling"]
