@@ -45,6 +45,11 @@ The handler reads `from` / `to` (ISO-8601 or relative like `-1h`), `limit`, and
 `_key_expr` against the queried key expression, and streams each historical row
 back as a properly-typed `Telemetry` instance. Bad input → an error reply.
 
+Each row is its own reply. A row with no key to reply on, because a single-segment
+slot holds a `/` (which zeared refuses, since it would split the key), is skipped:
+zeared logs it, or passes it to the chronicler's `on_error`, and the rest of the
+answer still goes out.
+
 ## The daemon
 
 `python -m stored run` loads config, opens a store + timestamped session,

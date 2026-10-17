@@ -84,7 +84,7 @@ Cls.on_message(record, ...)          [zeared subscriber, 2-arg callback]
 Cls.query(id=…, params={from,to,limit})   [zeared getter]
    → stored queryable handler
    → Store.query (flush, then plan+select)
-   → ctx.reply(inst) per row                — streamed, properly-typed instances
+   → rows returned; zeared replies per row  — streamed, properly-typed instances
 ```
 
 `Store.query` **flushes the writer first**, so reads always see prior writes

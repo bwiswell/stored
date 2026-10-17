@@ -62,6 +62,11 @@ Handlers are `async def`, so they await the store on a worker thread and never
 block the loop. Declare the binding from inside a running loop — zeared schedules
 an async handler on the loop live at declaration time.
 
+A queryable's rows go out as one reply each. A row with no key to reply on, because
+a single-segment slot holds a `/` (which zeared refuses, since it would split the
+key), is skipped: zeared logs it, or passes it to the method's `on_error`, and the
+rest of the answer still goes out.
+
 ### `record(cls, store_as=…, via=…)`
 
 *Subscribe A, persist B.* Several source contracts normalize into one row type,
@@ -249,7 +254,9 @@ class Reading(zeared.Message):
 `replay()` defaults to that sole `EXTRA_TOPICS` entry; pass `topic=` to choose among
 several, or `topic=cls.TOPIC` to republish onto the live topic (rarely what you
 want — recorders then cannot tell replay from live). A class with no declared scope
-and no explicit `topic=` is a `ConfigError` rather than a silent republish.
+and no explicit `topic=` is a `ConfigError` rather than a silent republish, and so
+is a `topic=` the class can't publish on (undeclared, or subscribe-only), found
+before anything is read.
 
 That one declaration carries the whole isolation story, because provenance has
 nowhere else to ride: `ZenohMeta.origin` is derived from the local delivery path and
@@ -279,6 +286,15 @@ A subscription covers every template a class declares, so:
 
 A replay always publishes with `retain=False`, so replaying a `RETAINED` class can
 never clobber the live retained value with a historical one.
+
+### Rows with no key
+
+A row whose single-segment slot holds a `/` has no key to go out on: zeared refuses
+it, since it would split the key. Such a row can only have been written by
+`Store.record` or a `via=` mapper, never captured from a key. The replay skips it,
+logs the first, and goes on; `handle.skipped` (or `progress['skipped']`) counts
+them all, and the replay logs the total when it ends. `replay()` returns the rows
+it sent.
 
 ## The sentinel policy
 

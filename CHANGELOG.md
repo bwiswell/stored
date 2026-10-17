@@ -10,8 +10,14 @@ lines as it lands, and the entry is dated when that version is released.
 
 ## 0.4.0 — unreleased
 
-**On seared and zeared 0.4.0.** stored adopts both siblings' breaking releases, which change what it records and
-serves in the ways marked below, and a chronicler no longer records each retained value again every time it starts.
+**On seared 0.4.0 and zeared 0.4.1.** stored adopts both siblings' breaking releases, which change what it records
+and serves in the ways marked below, and a chronicler no longer records each retained value again every time it
+starts.
+
+### Added
+
+- **`ReplayHandle.skipped`,** the rows a replay skipped because they had no key to publish on, beside `sent`. A
+  `progress` dict passed to `replay()` gains a `'skipped'` count too.
 
 ### Changed
 
@@ -33,9 +39,13 @@ serves in the ways marked below, and a chronicler no longer records each retaine
   segment raises zeared's `TopicError` when the chronicler or a binding first subscribes it, so a daemon configured
   with one fails at start. Either can render a `/` and split the key. Use `Bytes(encoding='hex')` or a `Str` slot,
   or a trailing `{name**}` slot for a path.
-- **seared and zeared are pinned to their `v0.4.0` tags,** and the declared ranges rise to `seared>=0.4.0,<0.5` and
-  `zeared>=0.4.0,<0.5`.
-- **Dependencies:** the lockfile resolves seared 0.4.0 (was 0.3.4) and zeared 0.4.0 (was 0.3.13). Nothing else
+- **Breaking:** `replay()` checks its destination before reading anything, and a `topic=` the class can't publish on
+  (undeclared, subscribe-only, or with a slot the class doesn't declare) raises `ConfigError`, as its docstring
+  said. It raised zeared's `TopicError` at the first row, or returned 0 for an empty window.
+- **seared and zeared are pinned to release tags,** seared `v0.4.0` and zeared `v0.4.1`, and the declared ranges
+  rise to `seared>=0.4.0,<0.5` and `zeared>=0.4.1,<0.5`. zeared 0.4.1 is the floor because a query whose reply fails
+  ends at once there; on 0.4.0 it stayed open until the serving process next collected garbage.
+- **Dependencies:** the lockfile resolves seared 0.4.0 (was 0.3.4) and zeared 0.4.1 (was 0.3.13). Nothing else
   moves.
 
 ### Fixed
@@ -46,6 +56,13 @@ serves in the ways marked below, and a chronicler no longer records each retaine
   a duplicate row. zeared 0.4.0 replies with the value's original timestamp, so a replay is the row already stored
   and its insert does nothing. The publisher's zeared decides it: replies from a session still on 0.3.x carry no
   timestamp, and their duplicates continue until it upgrades.
+- **A row with no key no longer ends a history reply or a replay.** A row whose single-segment slot holds a `/`,
+  written through `Store.record` or a `via=` mapper, has no key to go out on: zeared 0.4.0 refuses it, where 0.3.x
+  published it on a key nothing matched. The chronicler's history queryable stopped at such a row with an error
+  reply, and a replay ended there, a paged replay losing the rest of the page too. Each now skips the row and
+  carries on: the history queryable and a binding's queryables pass it to their `on_error`, or log it, and a replay
+  logs the first, counts them all on `skipped`, and logs the total. A row missing a slot value is skipped the same
+  way.
 
 ## 0.3.5 — 2026-10-16
 

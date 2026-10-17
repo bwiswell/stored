@@ -41,6 +41,17 @@ class Event(zeared.Message):
 
 
 @zeared.zeared
+class Mark(zeared.Message):
+    """A reply keyed by a slot, so a row whose slot holds a ``/`` has no key to reply on."""
+
+    TOPIC = 'test/mark/{source}'
+    REQUEST = HistoryRequest
+
+    source: str = zeared.Str(required=True)
+    raised_at: float = zeared.Float(required=True)
+
+
+@zeared.zeared
 class Alarm(zeared.Message):
     """A source contract that normalizes into :class:`Event`."""
 
@@ -446,6 +457,48 @@ async def test_streamed_range_reaches_a_streaming_getter(session):
 
         seen = [row.raised_at async for row in zeared.aquery_iter(Event, request=HistoryRequest(), timeout=5.0)]
         assert sorted(seen) == [1000.0 + i for i in range(9)]
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['collected', 'streamed'])
+async def test_a_row_with_no_key_is_skipped_and_the_rest_still_go_out(session, stream):
+    """zeared refuses a ``/`` in a single-segment slot, since it would split the key. Such a
+    row can only come from ``Store.record`` or a ``via=`` mapper. zeared sends each reply on
+    its own, so that one goes to ``on_error`` and the answer still ends, whole and on time."""
+    zeared.session = session
+    store, binding = AsyncStore(stored.Store(':memory:', flush_secs=0)), None
+    store.register(Mark, index=('source',), time_field='raised_at')
+    for i, source in enumerate(['rtls', 'x/y', 'rtls']):
+        store.record(Mark, Mark(source=source, raised_at=1000.0 + i))
+    await store.flush()
+    failures: list[type] = []  # types, not exceptions: a kept traceback keeps the query open
+    errors: list[Exception] = []
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_range(
+            Mark,
+            since='from_ts',
+            stream=stream,
+            on_error=lambda exc, _raw: failures.append(type(exc.__cause__)),
+        )
+        await _settle()
+
+        started = asyncio.get_running_loop().time()
+        replies = await zeared.aquery(
+            Mark,
+            request=HistoryRequest(),
+            timeout=5.0,
+            on_error=lambda exc, _raw: errors.append(exc),
+        )
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert sorted(r.raised_at for r in replies) == [1000.0, 1002.0]
+        assert failures == [zeared.TopicError]
+        assert not errors, errors
+        assert elapsed < 2.0, f'the getter waited {elapsed:.2f}s for an answer the binding had finished'
     finally:
         if binding:
             binding.close()
