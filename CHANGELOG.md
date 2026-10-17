@@ -46,6 +46,14 @@ lines as it lands, and the entry is dated when that version is released.
   pruned on delivery time, and no projection was kept. `migrate` and `prune` applied them, so the three disagreed.
   All three now register through one function, `stored.streams.register_stream`. Since 0.2.0.
 - `docs/configuration.md`'s stream table gains the `latest` row it had left out.
+- **The systemd unit starts the daemon.** Its `ExecStart` passed `--config` after `run`, but `-c` / `--config` is
+  the CLI's top-level option, so the parser rejected it and the unit couldn't start. It now runs
+  `stored -c /etc/stored/stored.toml run`, and a test parses the unit's command with the CLI's own parser, so the
+  two can't drift apart again. Since 0.1.0.
+- **The `stored` command exists.** The README and docs ran `stored -c … <verb>`, but no console script was declared,
+  so only `python -m stored` worked. `pyproject.toml` now declares `stored = "stored.cli:main"`.
+- **The unit's comments and `docs/chronicler.md` describe the daemon as it is:** it sends `READY=1` and `STOPPING=1`
+  already, and declares no Zenoh liveliness token, so health is systemd supervision alone.
 
 ## 0.3.4 — 2026-10-03
 
