@@ -24,7 +24,6 @@ from .errors import (
     RegistrationError,
     SchemaError,
     StoredError,
-    WriterError,
 )
 from .latest import LatestMeta
 from .store import Store
@@ -46,7 +45,6 @@ __all__ = [
     'StoredConfig',
     'StoredError',
     'StreamSpec',
-    'WriterError',
     '__version__',
 ]
 

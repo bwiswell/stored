@@ -342,7 +342,7 @@ class Store:
           keeps draining. Rows recorded mid-walk that sort *after* the current
           position will be yielded; the keyset anchor guarantees no row is yielded
           twice and none is skipped.
-        - **Rows with no event time are skipped.** A nullable ``time_field`` that
+        - **Rows with no event time are skipped.** An optional ``time_field`` that
           arrived unset has no place on the temporal axis the walk resumes along.
           :meth:`query` still returns them within an unbounded window.
 

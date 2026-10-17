@@ -41,7 +41,9 @@ if TYPE_CHECKING:
 _log = get_logger('mesh.binding')
 
 #: The default "not provided" values: the empty-string / zero convention a wire
-#: format without optionals falls back on. ``None`` is always absent.
+#: format without optionals falls back on. ``None`` is absent too, but a request
+#: field only holds it when ``None`` is its default or it is ``nullable=True``: a
+#: wire ``null`` on any other field reads as the field's default.
 UNSET_FALSY: tuple[Any, ...] = ('', 0, 0.0, None)
 
 

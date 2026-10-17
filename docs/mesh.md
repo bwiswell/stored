@@ -2,13 +2,15 @@
 
 `stored.zenoh` is named for the *transport*: a session, the `Chronicler`, the
 daemon, a selector-param query handler. `stored.mesh` is the layer above it — the
-shapes a **service** binds. Two inhabitants today:
+shapes a **service** binds. Three inhabitants:
 
 - **`AsyncStore`** — an awaitable view of a blocking `Store`, for services on an
   event loop. Needs no transport at all.
 - **`Binding`** — subscribers and queryables declared against typed contracts:
   record, time-range history, last-known for one entity, and current state for a
   population.
+- **`Replayer`** — recorded history published back onto the mesh, so ordinary
+  subscribers receive it.
 
 Everything here speaks *zeared* vocabulary — a message class, its `REQUEST`
 payload, a queryable, a projection function — and nothing else. No contract,
@@ -79,9 +81,26 @@ redelivery of a source message still dedups on the stored primary key.
 ### `serve_range(cls, …)`
 
 Reads the request's fields by name: `filters` become equality filters on indexed
-dimensions, `since`/`until` the window, `limit` the cap. `cls` is both the stored
-class and the reply class — a stream is queried by, and answers with, the class it
-is stored as.
+dimensions, `since`/`until` the window, `limit` the cap. `cls` is the reply class,
+and the stored class too unless `of=` names another, when `project=` turns each row
+into a reply (as for `serve_snapshot`, below).
+
+### Limits and pages
+
+- **`default_limit`** fills in a request that names no `limit`; **`max_limit`** is
+  the service's ceiling, applied whatever the request asks. Set `max_limit` wherever
+  a caller collects every reply into one frame: a request for a hundred thousand
+  rows shouldn't get them. Without either, the planner's defaults apply: 1,000 rows
+  when no limit is given, and never more than 100,000.
+- **`cursor=`** names a field on the request *and* the reply for paging. The
+  request's value (empty for the first page) resumes the walk after the row it
+  names. The last reply of a full page carries the next page's cursor, and every
+  other reply an empty one: a multi-reply answer has no envelope, so its last row
+  carries it. It needs a collected answer (`stream=False`).
+
+```python
+binding.serve_range(Event, filters=('source',), limit='limit', cursor='cursor', max_limit=5000)
+```
 
 ### Streaming a range
 
@@ -240,6 +259,11 @@ handle = replayer.start(Reading, since='-1h', speed=1.0)    # real time, in the 
 handle.stop();  sent = await handle.wait()
 ```
 
+A `ReplayHandle` reports `sent` and `skipped` as the replay runs, `done` once it
+has finished, been stopped or failed, and holds the asyncio `task` it runs on.
+`stop()` ends it after the row in flight, and `await wait()` returns the rows
+published.
+
 ### Where a replay lands
 
 zeared publishes on **declared** templates only, so a replayable class declares its
@@ -309,6 +333,12 @@ HistoryRequest()                     # filters on nothing: the whole history
 
 Pass `unset=(None,)` for a strict convention where `''` is a real value to match,
 or any tuple a given fleet treats as absent.
+
+A request field holds `None` only when `None` is its default or it is
+`nullable=True`. Since seared 0.4.0, a wire `null` on any other field reads as the
+field's default, so a policy that lists only `None` counts it as provided; and a
+`null` in a required field leaves the request undecoded, which the binding logs
+("query carried no … payload") and answers with nothing.
 
 When a request's fields disagree, name the exceptions per field. A mapping names
 only the fields that differ; every other field keeps `UNSET_FALSY`:

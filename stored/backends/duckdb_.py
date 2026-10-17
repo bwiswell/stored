@@ -1,4 +1,4 @@
-"""DuckDB storage backend (default).
+"""DuckDB storage backend (the optional ``stored[duckdb]`` extra).
 
 Embedded, columnar, single-writer — a natural fit for the sole-writer
 chronicler daemon, and the engine whose native Parquet ``COPY`` makes the

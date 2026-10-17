@@ -65,8 +65,9 @@ class AsyncStore:
 
         Args:
             cls: A ``@s.seared`` / ``@z.zeared`` message class.
-            **spec: As :meth:`stored.Store.register` — ``retention``, ``index``,
-                ``time_field``, ``latest_key``, ``latest_retention``, ``archive``.
+            **spec: As :meth:`stored.Store.register` — ``retention``, ``archive``,
+                ``index``, ``json_index``, ``time_field``, ``latest_key``,
+                ``latest_retention``, ``latest_run_gap``.
 
         Returns:
             The registered :class:`~stored.registry.Stream`.

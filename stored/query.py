@@ -89,7 +89,7 @@ class Window:
         start: Inclusive lower bound, or ``None`` for open-start.
         end: Inclusive upper bound, or ``None`` for open-end.
         limit: Maximum rows to return (clamped to :data:`MAX_LIMIT`).
-        ascending: Sort direction on ``_issued_at`` / ``_ts_hlc``.
+        ascending: Sort direction on the stream's ``time_column``, then ``_ts_hlc``.
     """
 
     start: datetime | None
@@ -254,7 +254,7 @@ def plan(
             read out of ``_payload``. A collection value filters by membership.
         after: Resume strictly after this :data:`Anchor` — the keyset predicate
             behind ``Store.iter``'s paging. ``None`` starts at the beginning.
-        skip_null_time: Exclude rows whose temporal axis is ``NULL`` (a nullable
+        skip_null_time: Exclude rows whose temporal axis is ``NULL`` (an optional
             ``time_field`` that arrived unset). Paging requires it: a ``NULL``
             compares as unknown against any anchor, so such a row could otherwise
             be yielded once and then silently strand the walk.

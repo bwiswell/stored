@@ -20,7 +20,8 @@ ExecStart=/opt/stored/.venv/bin/stored -c /etc/stored/stored.toml run
 Restart=on-failure
 RestartSec=2
 # WatchdogSec=30            # needs periodic sd_notify(WATCHDOG=1), which the daemon doesn't send yet
-Environment=STORED_LOG_LEVEL=INFO
+# The log level is the TOML's `log_level`: with `-c`, the config comes from the
+# file alone, and STORED_* environment variables aren't read.
 # Harden as appropriate for the deployment host:
 # DynamicUser=yes
 # StateDirectory=stored

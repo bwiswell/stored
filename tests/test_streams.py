@@ -50,6 +50,17 @@ def test_register_streams_creates_table_and_retention(tmp_path):
         store.close()
 
 
+def test_register_stream_keeps_the_archive_horizon(tmp_path):
+    # Until 0.4.0 the config accepted `archive` and registration dropped it.
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        spec = StreamSpec.load({'cls': 'stored.config:StoredConfig', 'archive': '90d'})
+        register_stream(store, spec, StoredConfig)
+        assert store.registry.get(StoredConfig).archive == '90d'
+    finally:
+        store.close()
+
+
 def test_register_streams_wires_latest_projection(tmp_path):
     config = StoredConfig.load(
         {

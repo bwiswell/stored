@@ -2,8 +2,8 @@
 
 Unlike zeared's lazy last-value expiry, ``stored`` runs an active sweeper: a
 ``DELETE`` of rows older than each stream's retention horizon. It is invoked on
-demand here (``Store.prune`` / the ``prune`` CLI); periodic scheduling is wired
-into the daemon in M4.
+demand (``Store.prune`` / the ``prune`` CLI) and periodically by the daemon's
+reaper (``prune_interval``).
 
 A stream with a ``time_field`` expires on event time (``_event_at``). A row with
 none (its optional ``time_field`` was unset) has no place on that axis, so it

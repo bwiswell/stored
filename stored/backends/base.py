@@ -1,6 +1,7 @@
 """The :class:`StorageBackend` protocol.
 
-Every backend (DuckDB now, Postgres later) implements this narrow surface. The
+Every backend (SQLite by default, DuckDB as an extra, Postgres later) implements
+this narrow surface. The
 core — writer, query planner, TTL reaper — depends on the protocol only, never
 on a concrete engine, so a second backend is a drop-in.
 """

@@ -56,10 +56,17 @@ still returns it.
 Range queries meet this axis: `store.query(..., since=…, until=…)` bounds accept not
 only ISO / relative (`'-1h'`) strings but also **unix epoch seconds** and `datetime`
 objects — so a service maps a request's numeric `from_ts` / `to_ts` straight through,
-the same unix-seconds axis as `time_field`. `stored` provides these read primitives
-(`query` for ranges, `latest` for last-known); *serving* them over a mesh
-request/reply contract is the consumer's job (the pure-core split — `stored` stays
-`seared`-only and never learns the wire contracts).
+the same unix-seconds axis as `time_field`. The core provides these read primitives
+(`query` for ranges, `latest` for last-known) and stays `seared`-only, never
+learning the wire contracts; `stored.mesh.Binding` serves them over a mesh
+request/reply contract (see [mesh.md](mesh.md)).
+
+**When the field may arrive as `null`.** seared 0.4.0 reads a wire `null` on a field
+that isn't `nullable=True` as absent, so the field takes its default. Declare a
+`time_field` that may be `null` as `X | None` with `default=None` (or
+`nullable=True`): the row then has no event time, as above. With a real default,
+such as `Float(default=0.0)`, a `null` records that default — 1970 for an epoch
+field — so the row expires at the next sweep and sorts first.
 
 ## Type map (scalar fields)
 
@@ -134,16 +141,28 @@ last = store.latest(Location, source='site-a', item='i-1')   # -> Location | Non
 
 This is `stored`'s answer to a durable "last-known" query without retaining one mesh
 key per entity — the historian pattern behind a "where was it last seen" reply.
-Serving that over a mesh contract stays the consumer's job;
-`stored` provides the read primitive.
+`stored` provides the read primitive, and `stored.mesh.Binding.serve_latest` serves
+it over a mesh contract.
 
 ## Schema evolution
 
 `register` runs the backend's additive `ensure_table`: new fields become new
-(nullable) columns; removed/retyped fields are left in place (readable) and a
-migration is a manual step. Each row keeps its `_schema` tag, so mixed-schema
-history is self-describing. `stored migrate` re-runs the reconcile for every
-configured stream.
+(nullable) columns; removed/retyped fields are left in place and a migration is a
+manual step. Each row keeps its `_schema` tag, so mixed-schema history is
+self-describing. `stored migrate` re-runs the reconcile for every configured stream.
+
+A row is read back by loading its `_payload` into the stream's *current* class,
+strictly, so old rows stay readable only while that load succeeds. Two changes
+make the rows written before them raise `seared.ValidationError` from a read (and
+turn a history query into an error reply):
+
+- **a lossy retype** — a `Float` field whose history holds `3.7` retyped to `Int`,
+  or an `Int` holding `2` retyped to `Bool`. New in seared 0.4.0: 0.3.x truncated
+  or coerced the value;
+- **a new required field** — the old rows don't have it.
+
+Give a new field a default, and retype only to a type that holds every stored
+value exactly.
 
 ## Reaching into a `dict`
 
@@ -223,13 +242,14 @@ them on the next `register`/`migrate`.
 
 ## Archival roadmap (not v1)
 
-The DuckDB choice makes cold archival nearly free, and the day-grain
-`_issued_at` schema is chosen so it stays additive:
+DuckDB (the optional backend) makes cold archival nearly free, and the day-grain
+`_issued_at` schema is chosen so it stays additive. A stream's `archive` horizon is
+recorded at registration today and does nothing yet:
 
 1. **Segment** — `COPY (SELECT … WHERE _issued_at < cutoff) TO
    'archive/<stream>/<date>.parquet' (FORMAT PARQUET, COMPRESSION ZSTD)`, then
    delete those rows from the live DB.
 2. **Cold reads** — queries reaching past the warm horizon `UNION` the live
    table with `read_parquet('archive/<stream>/**/*.parquet')`.
-3. **Tiers** — hot (live DuckDB) → cold (Parquet segments) → expired. Parquet
+3. **Tiers** — hot (the live database) → cold (Parquet segments) → expired. Parquet
    segments are engine-neutral, so the archive outlives the live backend.
