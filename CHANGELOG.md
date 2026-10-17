@@ -8,9 +8,12 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
-## 0.4.1 — unreleased
+## 0.4.1 — 2026-10-17
 
-**The daemon's health, as systemd sees it.**
+**The daemon's health, as systemd sees it, and config it can check.** The daemon pings a systemd watchdog while its
+store can still do its work, and its status shows whether its mesh link is up. A config with no `[zenoh]` table
+takes its session from zeared's environment variables, so it can `run` from the environment alone, and
+`validate-config` refuses what `run` would refuse at start. The pins are unchanged: seared 0.4.0 and zeared 0.4.1.
 
 ### Added
 
