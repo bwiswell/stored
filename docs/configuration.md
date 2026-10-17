@@ -8,7 +8,7 @@ config layer.
 
 | Field            | Type              | Default             | Notes                                  |
 |------------------|-------------------|---------------------|----------------------------------------|
-| `identity`       | `str` (required)  | —                   | This instance's name on the mesh.      |
+| `identity`       | `str` (required)  | —                   | This instance's name on the mesh: the daemon's presence key is `stored/presence/{identity}`, so one key segment (no `/`, `*`, `$`, `?` or `#`). |
 | `db_path`        | `str`             | `chronicle.db`      | Backing database file.                 |
 | `backend`        | `str`             | `sqlite`            | `duckdb` (via `stored[duckdb]`); `postgres` later. |
 | `streams`        | `list[StreamSpec]`| `[]`                | What to record and serve.              |

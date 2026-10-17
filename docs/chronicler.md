@@ -55,9 +55,9 @@ answer still goes out.
 `python -m stored run` loads config, opens a store + timestamped session,
 resolves every configured stream, registers it with its whole `StreamSpec`
 (retention, indexes, `time_field` and `[streams.latest]`, exactly as `migrate` and
-`prune` register it) and subscribes it, starts the periodic reaper, signals
-`sd_notify(READY=1)`, and runs until SIGTERM/SIGINT — then tears down in order
-(reaper → chronicler → `z.release(session)` → store).
+`prune` register it) and subscribes it, starts the periodic reaper, declares its
+presence, signals `sd_notify(READY=1)`, and runs until SIGTERM/SIGINT — then tears
+down in order (presence → reaper → chronicler → `z.release(session)` → store).
 
 CLI:
 
@@ -71,6 +71,29 @@ stored -c stored.toml prune             # force a TTL sweep
 ## systemd
 
 Production is a systemd unit (`systemd/stored.service`, `Type=notify`), which
-runs `stored -c /etc/stored/stored.toml run`. The daemon signals readiness with
-`sd_notify(READY=1)` and is supervised by systemd — **no HTTP health port**. Logs
-go to stdout → journald. Containers are dev/CI only.
+runs `stored -c /etc/stored/stored.toml run`. Logs go to stdout → journald.
+Containers are dev/CI only.
+
+**Health is systemd supervision plus Zenoh liveliness — no HTTP health port.** The
+daemon signals `sd_notify(READY=1)` once every stream is subscribed, and holds a
+liveliness token at `stored/presence/{identity}` from just before then until it
+shuts down. Watch it with `stored.zenoh.ChroniclerPresence`:
+
+```python
+from stored.zenoh import ChroniclerPresence
+
+ChroniclerPresence.on_message(
+    lambda _msg: None,  # a token carries no message, so this never runs
+    on_online=lambda meta: print('up', meta.captures['identity']),
+    on_offline=lambda meta: print('down', meta.captures['identity']),
+)
+```
+
+A crash reads the same as a clean stop: Zenoh withdraws the token either way. A
+deployment with access rules grants the daemon `liveliness_token` on
+`stored/presence/**`, and its watchers `declare_liveliness_subscriber` and
+`liveliness_query` there.
+
+`identity` must be one key segment (no `/`, `*`, `$`, `?` or `#`), since it is the
+key's last segment; `run` refuses any other with a `ConfigError` before it opens
+anything.
