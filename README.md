@@ -211,7 +211,10 @@ stored -c stored.toml migrate               # create/reconcile tables
 stored -c stored.toml prune                 # force a TTL sweep
 ```
 
-See `systemd/stored.service` for the unit template.
+See `systemd/stored.service` for the unit template. Health is systemd supervision
+plus a Zenoh liveliness token the daemon holds at `stored/presence/{identity}`
+(`stored.zenoh.ChroniclerPresence`), so a watcher sees it come and go; with access
+rules, grant it `liveliness_token` there. See `docs/chronicler.md`.
 
 ## Documentation
 

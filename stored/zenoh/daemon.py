@@ -2,8 +2,9 @@
 
 Loads a :class:`~stored.config.StoredConfig`, opens a store and a timestamped
 session, resolves each configured stream's class, wires a
-:class:`~stored.zenoh.chronicler.Chronicler`, and runs until SIGTERM/SIGINT —
-then flushes, releases the session, and closes the store.
+:class:`~stored.zenoh.chronicler.Chronicler`, declares its presence (a liveliness
+token at ``stored/presence/{identity}``), and runs until SIGTERM/SIGINT — then
+withdraws the token, flushes, releases the session, and closes the store.
 """
 
 from __future__ import annotations
@@ -23,12 +24,36 @@ from ..log import configure, get_logger
 from ..store import Store
 from ..streams import register_stream
 from .chronicler import Chronicler
+from .presence import ChroniclerPresence
 from .session import open_session
 
 if TYPE_CHECKING:
     from ..config import StoredConfig, StreamSpec
 
 _log = get_logger('zenoh.daemon')
+
+#: Characters a key segment can't hold literally: ``/`` splits it, and the rest are
+#: Zenoh's wildcard and reserved characters, so ``*`` would declare a token on every
+#: identity at once.
+_NOT_IN_A_SEGMENT = frozenset('/*$?#')
+
+
+def _check_identity(identity: str) -> None:
+    """Refuse an identity that can't be the last segment of the presence key.
+
+    Raises:
+        ConfigError: If ``identity`` is empty, or holds a character a key segment
+            can't hold literally.
+    """
+    if not identity:
+        msg = 'identity is empty; it names this daemon on the mesh (stored/presence/{identity})'
+        raise ConfigError(msg)
+    found = sorted(_NOT_IN_A_SEGMENT.intersection(identity))
+    if found:
+        msg = (
+            f'identity {identity!r} holds {"".join(found)!r}; it must be one key segment (stored/presence/{{identity}})'
+        )
+        raise ConfigError(msg)
 
 
 def _resolve(spec: StreamSpec) -> type[z.Message]:
@@ -87,6 +112,7 @@ class Daemon:
         '_injected_store',
         '_owns_session',
         '_owns_store',
+        '_presence',
         '_reaper_stop',
         '_reaper_thread',
         '_session',
@@ -101,6 +127,7 @@ class Daemon:
         self._store: Store | None = None
         self._session: Any = None
         self._chronicler: Chronicler | None = None
+        self._presence: z.PresenceToken | None = None
         self._owns_store = False
         self._owns_session = False
         self._reaper_stop = threading.Event()
@@ -108,9 +135,10 @@ class Daemon:
         self._stop = threading.Event()
 
     def start(self) -> None:
-        """Open resources, register + subscribe every stream, signal readiness."""
+        """Open resources, register + subscribe every stream, declare presence, signal readiness."""
         cfg = self._config
         configure(cfg.log_level)
+        _check_identity(cfg.identity)
 
         if self._injected_store is not None:
             store = self._injected_store
@@ -158,8 +186,12 @@ class Daemon:
             )
             self._reaper_thread.start()
 
+        # Last before READY: the token says the daemon is recording, so it goes up
+        # once every stream is subscribed.
+        self._presence = ChroniclerPresence.declare_presence(session=session, identity=cfg.identity)
+
         _sd_notify('READY=1')
-        _log.info('stored chronicler ready (%d stream(s))', len(cfg.streams))
+        _log.info('stored chronicler ready (%d stream(s)) as %s', len(cfg.streams), self._presence.key)
 
     def _reaper_loop(self, store: Store, interval: float) -> None:
         """Sweep expired rows every ``interval`` seconds until stopped."""
@@ -180,8 +212,13 @@ class Daemon:
         self._stop.set()
 
     def shutdown(self) -> None:
-        """Tear down in order: reaper → chronicler → session → store."""
+        """Tear down in order: presence → reaper → chronicler → session → store."""
         _sd_notify('STOPPING=1')
+        # First, so watchers see the daemon go as it stops recording. Releasing the
+        # session would withdraw it too, but not an injected session's.
+        if self._presence is not None:
+            self._presence.undeclare()
+            self._presence = None
         self._reaper_stop.set()
         if self._reaper_thread is not None:
             self._reaper_thread.join(timeout=(self._config.prune_interval or 0.0) + 5.0)

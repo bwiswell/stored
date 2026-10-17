@@ -9,6 +9,7 @@ from _support_messages import Beacon, Sighting
 from stored import Store, StoredConfig
 from stored.config import StreamSpec
 from stored.errors import ConfigError
+from stored.zenoh import ChroniclerPresence
 from stored.zenoh.daemon import Daemon, _resolve, _sd_notify
 
 
@@ -121,6 +122,44 @@ def test_daemon_applies_the_whole_stream_spec(session):
         daemon.stop()
         daemon.shutdown()
         store.close()
+
+
+def test_daemon_holds_its_presence_while_it_runs(session):
+    # Health is systemd supervision plus this token: up once every stream is
+    # subscribed, and down as the daemon shuts down, before its session goes.
+    z.session = session
+    online: list[str] = []
+    offline: list[str] = []
+    sub = ChroniclerPresence.on_message(
+        lambda _msg: None,
+        session=session,
+        on_online=lambda meta: online.append(meta.captures['identity']),
+        on_offline=lambda meta: offline.append(meta.captures['identity']),
+    )
+    store = Store(':memory:', flush_secs=0)
+    daemon = Daemon(_config(), session=session, store=store)
+    try:
+        wait()
+        daemon.start()
+        wait()
+        assert (online, offline) == (['d1'], [])
+
+        daemon.stop()
+        daemon.shutdown()
+        wait()
+        assert offline == ['d1']
+    finally:
+        sub.close()
+        store.close()
+
+
+@pytest.mark.parametrize('identity', ['', 'site/chronicler', '*', 'r-$*', 'what?', 'no#1'])
+def test_an_identity_that_cannot_name_its_key_is_refused_before_anything_opens(identity, tmp_path):
+    db_path = tmp_path / 'chronicle.db'
+    config = StoredConfig.load({'identity': identity, 'db_path': str(db_path), 'prune_interval': 0})
+    with pytest.raises(ConfigError, match='identity'):
+        Daemon(config).start()
+    assert not db_path.exists()
 
 
 def test_run_composes_start_wait_shutdown(monkeypatch):

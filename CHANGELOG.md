@@ -18,6 +18,12 @@ starts.
 
 - **`ReplayHandle.skipped`,** the rows a replay skipped because they had no key to publish on, beside `sent`. A
   `progress` dict passed to `replay()` gains a `'skipped'` count too.
+- **The daemon holds a presence token.** `stored run` declares a Zenoh liveliness token at
+  `stored/presence/{identity}` once every stream is subscribed, just before `READY=1`, and withdraws it first as it
+  shuts down; a crash withdraws it too. So health is systemd supervision plus Zenoh liveliness, as the docs and the
+  systemd unit say again; 0.3.5 had taken the claim out, since no token was declared then. A watcher subscribes
+  `stored.zenoh.ChroniclerPresence` with `on_online` / `on_offline`. With access rules, grant the daemon
+  `liveliness_token` on `stored/presence/**`.
 
 ### Changed
 
@@ -39,6 +45,9 @@ starts.
   segment raises zeared's `TopicError` when the chronicler or a binding first subscribes it, so a daemon configured
   with one fails at start. Either can render a `/` and split the key. Use `Bytes(encoding='hex')` or a `Str` slot,
   or a trailing `{name**}` slot for a path.
+- **Breaking:** `stored run` refuses an `identity` that can't be one key segment (empty, or holding `/`, `*`, `$`,
+  `?` or `#`) with a `ConfigError`, before it opens anything. It names the presence key, where it had been unused; a
+  `*` would have declared a token on every identity at once.
 - **Breaking:** `replay()` checks its destination before reading anything, and a `topic=` the class can't publish on
   (undeclared, subscribe-only, or with a slot the class doesn't declare) raises `ConfigError`, as its docstring
   said. It raised zeared's `TopicError` at the first row, or returned 0 for an empty window.
