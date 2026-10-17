@@ -12,7 +12,7 @@ import pytest
 from stored import Store, StoredConfig
 from stored.config import StreamSpec
 from stored.errors import ConfigError
-from stored.streams import register_streams, resolve_stream_class
+from stored.streams import register_stream, register_streams, resolve_stream_class
 
 
 def test_resolve_ok_for_plain_seared_class():
@@ -69,5 +69,24 @@ def test_register_streams_wires_latest_projection(tmp_path):
         assert stream.has_latest
         assert stream.latest_key == ('identity',)
         assert stream.latest_retention == '30d'
+    finally:
+        store.close()
+
+
+def test_register_stream_applies_everything_a_spec_declares(tmp_path):
+    spec = StreamSpec.load(
+        {
+            'cls': 'stored.config:StoredConfig',
+            'retention': '7d',
+            'index': ['backend'],
+            'latest': {'key': ['identity'], 'retention': '30d'},
+        }
+    )
+    store = Store(str(tmp_path / 'c.db'))
+    try:
+        register_stream(store, spec, StoredConfig)
+        stream = store.registry.get(StoredConfig)
+        assert (stream.retention, stream.index) == ('7d', ('backend',))
+        assert (stream.latest_key, stream.latest_retention) == (('identity',), '30d')
     finally:
         store.close()

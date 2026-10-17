@@ -48,9 +48,11 @@ back as a properly-typed `Telemetry` instance. Bad input → an error reply.
 ## The daemon
 
 `python -m stored run` loads config, opens a store + timestamped session,
-resolves and subscribes every configured stream, starts the periodic reaper,
-signals `sd_notify(READY=1)`, and runs until SIGTERM/SIGINT — then tears down in
-order (reaper → chronicler → `z.release(session)` → store).
+resolves every configured stream, registers it with its whole `StreamSpec`
+(retention, indexes, `time_field` and `[streams.latest]`, exactly as `migrate` and
+`prune` register it) and subscribes it, starts the periodic reaper, signals
+`sd_notify(READY=1)`, and runs until SIGTERM/SIGINT — then tears down in order
+(reaper → chronicler → `z.release(session)` → store).
 
 CLI:
 
