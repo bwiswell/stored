@@ -54,6 +54,10 @@ lines as it lands, and the entry is dated when that version is released.
   so only `python -m stored` worked. `pyproject.toml` now declares `stored = "stored.cli:main"`.
 - **The unit's comments and `docs/chronicler.md` describe the daemon as it is:** it sends `READY=1` and `STOPPING=1`
   already, and declares no Zenoh liveliness token, so health is systemd supervision alone.
+- **A stream that keeps no runs reports no run start.** Re-registering a stream without `latest_run_gap` stopped the
+  upsert updating `_run_start` but left the column, and the `*_with_meta` reads went on returning its old value,
+  where `LatestMeta` promised `None`. They now read the column only when the stream keeps runs, on SQLite and DuckDB
+  alike. `stored.latest.meta_of` takes `keeps_runs=`, which defaults to the old behaviour. Since 0.3.3.
 
 ## 0.3.4 — 2026-10-03
 

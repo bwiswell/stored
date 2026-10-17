@@ -116,6 +116,10 @@ last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | Non
     it lands within the gap of it. It never resets a run.
   - Rows recorded before the column existed read `None`, meaning the run began before
     anyone was counting, until a gap is crossed.
+  - A stream registered **without** a gap reads `None`, whatever its table holds.
+    Dropping `latest_run_gap` from a registration leaves `_run_start` in place but stops
+    updating it; adding the gap back resumes from the values the column holds, which
+    went unmaintained in between.
 
   Read it with the `*_with_meta` twins of the latest reads (`latest_with_meta`,
   `query_latest_with_meta`, `query_latest_page_with_meta`, `iter_latest_with_meta`). Each

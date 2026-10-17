@@ -848,6 +848,34 @@ def test_a_row_from_before_runs_were_kept_reads_unknown_until_a_run_starts(tmp_p
         store.close()
 
 
+@pytest.mark.parametrize('backend', ['sqlite', 'duckdb'])
+def test_a_stream_registered_again_without_its_gap_reads_no_run_start(tmp_path, backend):
+    # Until 0.3.5 the old run start kept coming back: registering without
+    # `latest_run_gap` stops the upsert updating `_run_start`, but the column stays.
+    if backend == 'duckdb':
+        pytest.importorskip('duckdb')
+    path = str(tmp_path / f'c.{backend}')
+    store = Store(path, backend=backend, flush_secs=0)
+    store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',), latest_run_gap='1h')
+    store.record(Obs, Obs(id=1, observed_at=1000.0))
+    store.close()
+
+    store = Store(path, backend=backend, flush_secs=0)  # reopened, no longer keeping runs
+    store.register(Obs, index=('id',), time_field='observed_at', latest_key=('id',))
+    try:
+        store.record(Obs, Obs(id=1, observed_at=1000.0 + 3 * 86_400))
+        store.flush()
+        found = store.latest_with_meta(Obs, id=1)
+        assert found is not None
+        assert found[1].run_start is None
+        assert [meta.run_start for _, meta in store.query_latest_with_meta(Obs)] == [None]
+        page, _ = store.query_latest_page_with_meta(Obs)
+        assert [meta.run_start for _, meta in page] == [None]
+        assert [meta.run_start for _, meta in store.iter_latest_with_meta(Obs)] == [None]
+    finally:
+        store.close()
+
+
 def test_a_stream_keeping_no_run_reads_none_and_the_plain_reads_are_unchanged(tmp_path):
     store = Store(str(tmp_path / 'c.db'), flush_secs=0)
     try:
