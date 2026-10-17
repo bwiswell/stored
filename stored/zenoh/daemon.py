@@ -131,12 +131,14 @@ class Daemon:
         '_config',
         '_injected_session',
         '_injected_store',
+        '_link_handles',
         '_owns_session',
         '_owns_store',
         '_presence',
         '_reaper_stop',
         '_reaper_thread',
         '_session',
+        '_status',
         '_stop',
         '_store',
         '_watchdog_stop',
@@ -151,6 +153,8 @@ class Daemon:
         self._session: Any = None
         self._chronicler: Chronicler | None = None
         self._presence: z.PresenceToken | None = None
+        self._link_handles: list[Any] = []
+        self._status = ''
         self._owns_store = False
         self._owns_session = False
         self._reaper_stop = threading.Event()
@@ -201,6 +205,7 @@ class Daemon:
         self._store = store
         self._session = session
         self._chronicler = chronicler
+        self._link_handles = self._watch_link(session)
 
         if cfg.prune_interval > 0:
             self._reaper_thread = threading.Thread(
@@ -226,7 +231,30 @@ class Daemon:
         self._presence = ChroniclerPresence.declare_presence(session=session, identity=cfg.identity)
 
         _sd_notify('READY=1')
-        _log.info('stored chronicler ready (%d stream(s)) as %s', len(cfg.streams), self._presence.key)
+        self._status = f'recording {len(cfg.streams)} stream(s) as {self._presence.key}'
+        _sd_notify(f'STATUS={self._status}')
+        _log.info('stored chronicler ready: %s', self._status)
+
+    def _watch_link(self, session: Any) -> list[Any]:
+        """Report the mesh link's state to the log and systemd, for a session that can lose it (0.4.1).
+
+        Only a ``zeared.ManagedSession`` has the signals (``auto_reconnect`` in
+        ``[zenoh]``). It reconnects, re-fetches retained values and keeps the
+        presence token by itself, so a lost link changes the status and
+        nothing else: the watchdog keeps pinging, since a restart would undo
+        that work, and a hub restart would restart every daemon at once.
+        """
+        if not isinstance(session, z.ManagedSession):
+            return []
+        return [session.on_link_lost(self._link_lost), session.on_link_restored(self._link_restored)]
+
+    def _link_lost(self, _session: Any) -> None:
+        _log.warning('mesh link lost: nothing is recorded until the session reconnects')
+        _sd_notify('STATUS=mesh link lost; reconnecting')
+
+    def _link_restored(self, _session: Any) -> None:
+        _log.info('mesh link restored: %s', self._status)
+        _sd_notify(f'STATUS={self._status}')
 
     def _reaper_loop(self, store: Store, interval: float) -> None:
         """Sweep expired rows every ``interval`` seconds until stopped."""
@@ -268,8 +296,11 @@ class Daemon:
         self._stop.set()
 
     def shutdown(self) -> None:
-        """Tear down in order: watchdog → presence → reaper → chronicler → session → store."""
+        """Tear down in order: link watch → watchdog → presence → reaper → chronicler → session → store."""
         _sd_notify('STOPPING=1')
+        for handle in self._link_handles:
+            handle.cancel()
+        self._link_handles = []
         self._watchdog_stop.set()
         if self._watchdog_thread is not None:
             self._watchdog_thread.join(timeout=5.0)

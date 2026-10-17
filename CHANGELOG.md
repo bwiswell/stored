@@ -21,6 +21,10 @@ lines as it lands, and the entry is dated when that version is released.
 - **`Store.health(timeout)`**, that check on its own: `None` when the store's lock comes free within `timeout`
   seconds and its writer is flushing, else a short reason. `Writer.alive` says whether the periodic flush is
   running.
+- **The mesh link's state in `systemctl status`.** Once ready, the daemon's status reads
+  `recording N stream(s) as stored/presence/{identity}`. On a `ManagedSession` (`auto_reconnect` in `[zenoh]`) a
+  lost link turns it to `mesh link lost; reconnecting`, with a warning in the log, until the link returns. The
+  watchdog keeps pinging meanwhile: the session recovers by itself, and a restart would undo that.
 
 ## 0.4.0 — 2026-10-17
 

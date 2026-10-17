@@ -7,6 +7,7 @@ import time
 
 import pytest
 import zeared as z
+import zenoh
 from _support_messages import Beacon, Sighting
 
 from stored import Store, StoredConfig
@@ -309,3 +310,48 @@ def test_the_daemon_pings_while_it_runs_and_stops_on_shutdown(session, notify, m
         assert 'WATCHDOG=1' not in sent[stopping:]
     finally:
         store.close()
+
+
+# -- the mesh link's state (0.4.1) -------------------------------------------
+
+
+def _managed_peer():
+    """An isolated, timestamped peer with ``auto_reconnect``: a ``zeared.ManagedSession``."""
+    config = zenoh.Config()
+    config.insert_json5('mode', '"peer"')
+    config.insert_json5('scouting/multicast/enabled', 'false')
+    config.insert_json5('timestamping/enabled', 'true')
+    return z.peer(zenoh_config=config, auto_reconnect=True, probe_interval=0)
+
+
+def test_a_lost_link_shows_in_the_status_and_the_log(notify, capsys):
+    session = _managed_peer()
+    z.session = session
+    store = Store(':memory:', flush_secs=0)
+    daemon = Daemon(_config(), session=session, store=store)
+    ready = 'STATUS=recording 1 stream(s) as stored/presence/d1'
+    try:
+        daemon.start()
+        assert [notify.recv(), notify.recv()] == ['READY=1', ready]
+
+        session._fire('link_lost')
+        assert notify.recv() == 'STATUS=mesh link lost; reconnecting'
+        session._fire('link_restored')
+        assert notify.recv() == ready
+        out = capsys.readouterr().out
+        assert 'mesh link lost: nothing is recorded until the session reconnects' in out
+        assert 'mesh link restored' in out
+
+        daemon.stop()
+        daemon.shutdown()
+        assert daemon._link_handles == []
+        session._fire('link_lost')  # the handles were cancelled at shutdown
+        assert 'STATUS=mesh link lost; reconnecting' not in notify.drain(0.2)
+    finally:
+        store.close()
+        z.release(session=session)
+
+
+def test_a_session_without_the_signals_isnt_watched(session):
+    # A plain session has no link signals; only a ``ManagedSession`` reconnects.
+    assert Daemon(_config(), session=session)._watch_link(session) == []
