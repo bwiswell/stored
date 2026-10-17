@@ -89,10 +89,21 @@ presence token comes back with it.
 CLI:
 
 ```sh
-stored -c stored.toml validate-config   # load + summarize config
+stored -c stored.toml validate-config   # load, check + summarize config
 stored -c stored.toml run               # the chronicler daemon
 stored -c stored.toml migrate           # create/reconcile stream tables
 stored -c stored.toml prune             # force a TTL sweep
+```
+
+`validate-config` refuses what `run` would refuse at start (0.4.1): an identity
+that isn't one key segment, and a `[zenoh]` table `run` can't open a session
+from (no `mode`, or a wrong value), loaded as `run` loads it. With no table, `run`
+reads the session from `ZEARED_SESSION_*`, which `validate-config` leaves
+unchecked, importing no transport. Its summary ends `zenoh=table` or `zenoh=env`
+to say which:
+
+```text
+ok: identity='chronicler-1' backend='sqlite' db_path='chronicle.db' streams=2 zenoh=table
 ```
 
 ## systemd
@@ -121,6 +132,27 @@ deployment with access rules grants the daemon `liveliness_token` on
 `stored/presence/**`, and its watchers `declare_liveliness_subscriber` and
 `liveliness_query` there.
 
+**The watchdog** (0.4.1). The unit sets `WatchdogSec=30`, and the daemon pings
+systemd with `WATCHDOG=1` every half period, but only while the store can still
+do its work: its lock, which every backend read and write takes, must come free
+within half a tick, and the writer's periodic flush must be running. A backend
+wedged mid-statement, or a writer that has stopped, stops the pings, and systemd
+restarts the daemon (`Restart=on-failure`). Each missed ping logs why. The pings
+run only when systemd sets `WATCHDOG_USEC` for this process, so a daemon outside
+such a unit sends none. `Store.health(timeout)` is the same check, for a service
+that embeds a store and has a watchdog of its own: `None` when healthy, else a
+short reason.
+
+**The mesh link** (0.4.1). Once ready, the daemon's `systemctl status` line reads
+`recording N stream(s) as stored/presence/{identity}`. With `auto_reconnect` in
+`[zenoh]` the session is a `zeared.ManagedSession`, and when its link to the mesh
+goes stale the status becomes `mesh link lost; reconnecting`, with a warning in
+the log, and returns once the link is whole again. Nothing else changes: the
+session reconnects, re-fetches retained values and keeps the presence token by
+itself, so the watchdog keeps pinging, since a restart would undo that work, and a
+hub restart would restart every daemon on the mesh at once. A session without
+`auto_reconnect` has no such signals.
+
 `identity` must be one key segment (no `/`, `*`, `$`, `?` or `#`), since it is the
 key's last segment; `run` refuses any other with a `ConfigError` before it opens
-anything.
+anything, and `validate-config` does too (`stored.config.check_identity`).

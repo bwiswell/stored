@@ -8,6 +8,41 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.1 — 2026-10-17
+
+**The daemon's health, as systemd sees it, and config it can check.** The daemon pings a systemd watchdog while its
+store can still do its work, and its status shows whether its mesh link is up. A config with no `[zenoh]` table
+takes its session from zeared's environment variables, so it can `run` from the environment alone, and
+`validate-config` refuses what `run` would refuse at start. The pins are unchanged: seared 0.4.0 and zeared 0.4.1.
+
+### Added
+
+- **A systemd watchdog.** The unit template sets `WatchdogSec=30`, and the daemon pings `WATCHDOG=1` every half
+  period while the store can still do its work: its lock comes free within half a tick and its writer is flushing. A
+  wedged backend or a stopped writer stops the pings, so systemd restarts the daemon, and each missed ping logs why.
+  The daemon pings only when systemd sets `WATCHDOG_USEC` for it.
+- **`Store.health(timeout)`**, that check on its own: `None` when the store's lock comes free within `timeout`
+  seconds and its writer is flushing, else a short reason. `Writer.alive` says whether the periodic flush is
+  running.
+- **The mesh link's state in `systemctl status`.** Once ready, the daemon's status reads
+  `recording N stream(s) as stored/presence/{identity}`. On a `ManagedSession` (`auto_reconnect` in `[zenoh]`) a
+  lost link turns it to `mesh link lost; reconnecting`, with a warning in the log, until the link returns. The
+  watchdog keeps pinging meanwhile: the session recovers by itself, and a restart would undo that.
+- **The session from the environment.** With no `[zenoh]` table, the daemon's session comes from zeared's
+  `ZEARED_SESSION_*` variables (`SessionConfig.from_env`), so an environment-only config can `run`, where it had no
+  `mode`. A table, when there is one, is still used whole. With neither, `run` raises a `ConfigError` saying where
+  to set a `mode`, as it does for a table without one. `stored.zenoh.session.session_config` makes the choice.
+- **`stored.config.check_identity(identity)`**, the daemon's identity rule as a function of the string alone: a
+  `ConfigError` for an identity that can't be one key segment.
+
+### Changed
+
+- **Breaking:** `validate-config` refuses what `run` would refuse at start, so a config that passed it may not. An
+  `identity` that can't be one key segment fails it, and so does a `[zenoh]` table with no `mode` or a wrong value
+  (`mode = "bogus"`), loaded with zeared as `run` loads it. With no table, zeared isn't imported, and the
+  `ZEARED_SESSION_*` variables `run` would read go unchecked.
+- **`validate-config`'s summary ends `zenoh=table` or `zenoh=env`,** saying where `run` takes its session from.
+
 ## 0.4.0 — 2026-10-17
 
 **On seared 0.4.0 and zeared 0.4.1, with a presence token for the daemon.** stored adopts both siblings' breaking

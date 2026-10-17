@@ -13,7 +13,14 @@ import os
 
 import seared as s
 
+from .errors import ConfigError
+
 _ENV_PREFIX_DEFAULT = 'STORED_'
+
+#: Characters a key segment can't hold literally: ``/`` splits it, and the rest are
+#: Zenoh's wildcard and reserved characters, so ``*`` would declare a token on every
+#: identity at once.
+_NOT_IN_A_SEGMENT = frozenset('/*$?#')
 
 
 def _split_csv(value: str) -> list[str]:
@@ -134,4 +141,28 @@ class StoredConfig(s.Seared):
         return cls.load(data)
 
 
-__all__ = ['LatestSpec', 'StoredConfig', 'StreamSpec']
+def check_identity(identity: str) -> None:
+    """Refuse an identity that can't be the last segment of the presence key.
+
+    The daemon calls it at start, and ``validate-config`` before it (0.4.1). It
+    reads the string alone, so it imports no transport.
+
+    Args:
+        identity: The config's ``identity``.
+
+    Raises:
+        ConfigError: If ``identity`` is empty, or holds a character a key segment
+            can't hold literally.
+    """
+    if not identity:
+        msg = 'identity is empty; it names this daemon on the mesh (stored/presence/{identity})'
+        raise ConfigError(msg)
+    found = sorted(_NOT_IN_A_SEGMENT.intersection(identity))
+    if found:
+        msg = (
+            f'identity {identity!r} holds {"".join(found)!r}; it must be one key segment (stored/presence/{{identity}})'
+        )
+        raise ConfigError(msg)
+
+
+__all__ = ['LatestSpec', 'StoredConfig', 'StreamSpec', 'check_identity']

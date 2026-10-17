@@ -1,4 +1,5 @@
 import datetime as dt
+import threading
 
 import pytest
 import seared as s
@@ -928,5 +929,45 @@ def test_every_latest_read_has_a_with_meta_twin_returning_the_same_rows(tmp_path
 
         walked = list(store.iter_latest_with_meta(Obs, chunk=1))
         assert [(r.id, m.run_start) for r, m in walked] == [(r.id, m.run_start) for r, m in paired]
+    finally:
+        store.close()
+
+
+# -- health: what the daemon's watchdog checks (0.4.1) ---------------------
+
+
+def test_a_store_that_can_work_is_healthy(tmp_path):
+    store = Store(str(tmp_path / 'c.db'), flush_secs=60)
+    try:
+        assert store.health(timeout=1.0) is None
+    finally:
+        store.close()
+
+
+def test_a_store_whose_lock_stays_held_is_not(tmp_path):
+    store = Store(str(tmp_path / 'c.db'), flush_secs=0)
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with store._lock:
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        held.wait(5)
+        assert store.health(timeout=0.05) == 'the store has been busy for over 0.05s'
+    finally:
+        release.set()
+        holder.join()
+        store.close()
+
+
+def test_a_store_whose_writer_stopped_is_not(tmp_path):
+    store = Store(str(tmp_path / 'c.db'), flush_secs=60)
+    try:
+        store._writer.close()
+        assert store.health(timeout=1.0) == 'the writer has stopped flushing'
     finally:
         store.close()

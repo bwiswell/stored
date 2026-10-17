@@ -36,21 +36,21 @@ sister that remembers.
 ## Install
 
 Each release is tagged `v<version>` on GitHub (the first is `v0.3.5`; the latest is
-`v0.4.0`). Install one by its tag:
+`v0.4.1`). Install one by its tag:
 
 ```sh
 # persist/query seared objects + the Zenoh chronicler (stdlib sqlite3 backend)
-uv add git+https://github.com/bwiswell/stored --tag v0.4.0
+uv add git+https://github.com/bwiswell/stored --tag v0.4.1
 
 # with the DuckDB backend (analytics upgrade)
-uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.4.0"
+uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.4.1"
 ```
 
 `uv add` records the tag as the dependency's source:
 
 ```toml
 [tool.uv.sources]
-stored = { git = "https://github.com/bwiswell/stored", tag = "v0.4.0" }
+stored = { git = "https://github.com/bwiswell/stored", tag = "v0.4.1" }
 ```
 
 **The tag is the pin.** uv doesn't check a version specifier such as
@@ -273,6 +273,10 @@ stored -c stored.toml run                   # systemd Type=notify service
 stored -c stored.toml migrate               # create/reconcile tables
 stored -c stored.toml prune                 # force a TTL sweep
 ```
+
+The session's connection is the config's `[zenoh]` table, or, when it has none,
+zeared's `ZEARED_SESSION_*` variables, so the daemon can run from the environment
+alone (see `docs/configuration.md`).
 
 See `systemd/stored.service` for the unit template. Health is systemd supervision
 plus a Zenoh liveliness token the daemon holds at `stored/presence/{identity}`

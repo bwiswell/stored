@@ -5,7 +5,9 @@
 #
 # Type=notify: the daemon sends sd_notify(READY=1) once its session is open,
 # every stream is subscribed and its presence token is up, and STOPPING=1 as it
-# shuts down.
+# shuts down. With WatchdogSec it pings WATCHDOG=1 every half period, but only
+# while the store's lock comes free and its writer is flushing, so a wedged
+# backend stops the pings and systemd restarts the daemon (Restart=on-failure).
 #
 # `-c` is the CLI's top-level option, so it goes before the `run` subcommand.
 
@@ -19,9 +21,10 @@ Type=notify
 ExecStart=/opt/stored/.venv/bin/stored -c /etc/stored/stored.toml run
 Restart=on-failure
 RestartSec=2
-# WatchdogSec=30            # needs periodic sd_notify(WATCHDOG=1), which the daemon doesn't send yet
+WatchdogSec=30
 # The log level is the TOML's `log_level`: with `-c`, the config comes from the
-# file alone, and STORED_* environment variables aren't read.
+# file alone, and STORED_* environment variables aren't read. ZEARED_SESSION_*
+# ones are, but only when the file has no [zenoh] table.
 # Harden as appropriate for the deployment host:
 # DynamicUser=yes
 # StateDirectory=stored

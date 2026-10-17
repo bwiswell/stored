@@ -3,7 +3,11 @@ import sqlite3
 from importlib.metadata import entry_points
 from pathlib import Path
 
+import pytest
+import seared as s
+
 from stored.cli import build_parser, main
+from stored.errors import ConfigError
 
 _UNIT = Path(__file__).parent.parent / 'systemd' / 'stored.service'
 
@@ -13,6 +17,55 @@ def test_validate_config(tmp_path, capsys):
     toml.write_text('identity = "x"\n')
     assert main(['-c', str(toml), 'validate-config']) == 0
     assert 'identity=' in capsys.readouterr().out
+
+
+def _validate(tmp_path, toml):
+    path = tmp_path / 'c.toml'
+    path.write_text(toml)
+    return main(['-c', str(path), 'validate-config'])
+
+
+@pytest.mark.parametrize(
+    ('toml', 'source'),
+    [
+        ('identity = "x"\n', 'env'),
+        ('identity = "x"\n[zenoh]\nmode = "client"\nrouter = "tcp/hub:7447"\n', 'table'),
+    ],
+)
+def test_validate_config_says_where_the_session_comes_from(tmp_path, capsys, toml, source):
+    assert _validate(tmp_path, toml) == 0
+    assert capsys.readouterr().out.rstrip().endswith(f' zenoh={source}')
+
+
+def test_validate_config_refuses_the_identity_run_would(tmp_path):
+    with pytest.raises(ConfigError, match='one key segment'):
+        _validate(tmp_path, 'identity = "site/chronicler"\n')
+
+
+@pytest.mark.parametrize(
+    ('table', 'where'),
+    [
+        ('mode = "bogus"\n', r'SessionConfig\.mode'),
+        ('mode = "peer"\nmax_attempts = "three"\n', r'SessionConfig\.max_attempts'),
+    ],
+)
+def test_validate_config_checks_a_zenoh_table(tmp_path, table, where):
+    # Until 0.4.1 the table went unread until `run`, so these passed.
+    with pytest.raises(s.ValidationError, match=where):
+        _validate(tmp_path, f'identity = "x"\n[zenoh]\n{table}')
+
+
+def test_validate_config_refuses_a_zenoh_table_without_a_mode(tmp_path):
+    with pytest.raises(ConfigError, match=r'^\[zenoh\] sets no mode'):
+        _validate(tmp_path, 'identity = "x"\n[zenoh]\nrouter = "tcp/hub:7447"\n')
+
+
+def test_validate_config_leaves_the_environment_unchecked(tmp_path, monkeypatch, capsys):
+    # With no table, `run` reads ZEARED_SESSION_*. validate-config imports no
+    # transport then, so it doesn't check them; the summary says where they're from.
+    monkeypatch.setenv('ZEARED_SESSION_MODE', 'bogus')
+    assert _validate(tmp_path, 'identity = "x"\n') == 0
+    assert 'zenoh=env' in capsys.readouterr().out
 
 
 def test_migrate_creates_tables(tmp_path, capsys):

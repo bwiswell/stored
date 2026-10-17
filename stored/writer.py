@@ -82,6 +82,19 @@ class Writer:
             )
             self._thread.start()
 
+    @property
+    def alive(self) -> bool:
+        """Whether the periodic flush is running as configured (0.4.1).
+
+        ``True`` with ``flush_secs`` 0, which needs no thread; otherwise the
+        thread must have started and still be running. A writer that is
+        flushing nothing on its timer buffers rows until the threshold or
+        ``close``, so a watchdog treats a dead thread as a fault.
+        """
+        if self._flush_secs <= 0:
+            return True
+        return self._thread is not None and self._thread.is_alive()
+
     def _run(self) -> None:
         """Flush every ``flush_secs`` until stopped."""
         while not self._stop.wait(self._flush_secs):
