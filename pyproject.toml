@@ -6,15 +6,17 @@ authors = [
     { name = "Benj Wiswell", email = "benjwiswell@gmail.com" },
 ]
 requires-python = ">=3.14,<4.0"
+# The ranges are the seared and zeared this release is tested against. uv doesn't
+# check a range against a git source, so the tags below are what pin them.
 dependencies = [
-    "seared>=0.2.1",
-    # zeared is a core dependency: stored is a zeared-native chronicler (plan
-    # 02). Every real consumer is a mesh service that already carries zeared, so
-    # hiding it behind an extra guarded a consumer-less install. ``eclipse-zenoh``
-    # / ``msgpack`` arrive transitively. The seared-only *core* still imports no
+    "seared>=0.3.4,<0.4",
+    # zeared is a core dependency: stored is a zeared-native chronicler, and every
+    # real consumer is a mesh service that already carries zeared, so hiding it
+    # behind an extra only guarded an install nobody made. ``eclipse-zenoh`` /
+    # ``msgpack`` arrive transitively. The seared-only *core* still imports no
     # zeared at runtime (the top-level ``Chronicler`` re-export is lazy), so a
     # Store-only ``import stored`` stays transport-free at import time.
-    "zeared>=0.3.5",
+    "zeared>=0.3.13,<0.4",
 ]
 
 [project.optional-dependencies]
@@ -38,12 +40,18 @@ dev = [
 ]
 
 [tool.uv.sources]
-# House convention: cross-repo deps via git sources (kept as plain version
-# specs above so hatchling sees no direct reference). For local co-development
-# against the workspace clones, override with e.g.
+# Cross-repo deps come from their GitHub remotes, each at a release tag (kept as
+# plain version specs above so hatchling sees no direct reference). uv doesn't
+# check the ranges above against a git source, so the tag is what pins it:
+# without one, a `uv lock --upgrade` would take whatever the sibling's `master`
+# holds. Moving to a new sibling release means moving its tag, then
+# `uv lock --upgrade-package <name>` (a plain `uv lock` keeps the locked
+# commit). The two must also agree with each other: zeared pins seared by tag,
+# and uv refuses two different URLs for one package. To test against an
+# unpushed change, point a source at the sibling checkout locally:
 #   seared = { path = "../seared", editable = true }
-seared = { git = "https://github.com/bwiswell/seared" }
-zeared = { git = "https://github.com/bwiswell/zeared" }
+seared = { git = "https://github.com/bwiswell/seared", tag = "v0.3.4" }
+zeared = { git = "https://github.com/bwiswell/zeared", tag = "v0.3.13" }
 
 [build-system]
 requires = ["hatchling"]

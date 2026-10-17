@@ -10,12 +10,21 @@ lines as it lands, and the entry is dated when that version is released.
 
 ## 0.3.5 — unreleased
 
-**The changelog ships with the repository.**
+**The changelog ships with the repository, and seared and zeared are pinned to release tags.**
 
 ### Added
 
 - **`CHANGELOG.md`**, this file: every release from 0.1.0 on, newest first. It is kept in the repository and grows
   with each change as it merges. The entries before 0.3.5 were written afterwards, from each release's changes.
+
+### Changed
+
+- **seared and zeared are pinned to release tags,** `v0.3.4` and `v0.3.13`, and the declared ranges rise to the
+  versions tested against: `seared>=0.3.4,<0.4` and `zeared>=0.3.13,<0.4`. uv checks no range against a git source,
+  so the tags are what pin them. Relocking works again: stored's seared source carried no tag, zeared's pins seared
+  by one, and uv refuses two different URLs for one package.
+- **Dependencies:** the lockfile resolves seared 0.3.4 (was 0.3.2) and zeared 0.3.13 (was 0.3.7). It is the suite's
+  first run against zeared 0.3.8 to 0.3.13, and nothing stored relies on changed.
 
 ## 0.3.4 — 2026-10-03
 
