@@ -1,7 +1,8 @@
 import pytest
 import seared as s
 
-from stored.config import StoredConfig, StreamSpec
+from stored.config import StoredConfig, StreamSpec, check_identity
+from stored.errors import ConfigError
 
 
 def test_defaults_via_load():
@@ -17,6 +18,28 @@ def test_defaults_via_load():
 def test_identity_required():
     with pytest.raises(s.ValidationError):
         StoredConfig.load({})
+
+
+@pytest.mark.parametrize('identity', ['chronicler-1', 'site.a_b', 'résumé'])
+def test_check_identity_passes_one_key_segment(identity):
+    check_identity(identity)
+
+
+@pytest.mark.parametrize(
+    ('identity', 'reason'),
+    [
+        ('', 'identity is empty'),
+        ('site/chronicler', "holds '/'"),
+        ('*', r"holds '\*'"),
+        ('r-$*', r"holds '\$\*'"),
+        ('what?', r"holds '\?'"),
+        ('no#1', "holds '#'"),
+    ],
+)
+def test_check_identity_refuses_what_cannot_be_one_key_segment(identity, reason):
+    # Pure string, so validate-config can run it with no transport imported.
+    with pytest.raises(ConfigError, match=reason):
+        check_identity(identity)
 
 
 def test_from_env(monkeypatch):

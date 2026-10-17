@@ -103,6 +103,7 @@ session opened with `zeared.open`, timestamping on. With no table, each key but
 | `zenoh_overrides`    | `{}`       | JSON5 fragments keyed by config path, applied last, e.g. `"scouting/multicast/enabled" = false`. Don't turn timestamping off here: the chronicler dedups and orders on it. |
 
 `auto_reconnect`, `probe_interval`, `resync_jitter` and `resync_concurrency` are new
-in zeared 0.4. A key the table doesn't know is dropped without a word, and `validate-config` doesn't load the table, so
-check a key against this list (or zeared's `SessionConfig`) when it seems to do
-nothing.
+in zeared 0.4. `validate-config` loads the table as `run` does (0.4.1), so a
+missing `mode` or a wrong value fails it. A key the table doesn't know is still
+dropped without a word, though, so check a key against this list (or zeared's
+`SessionConfig`) when it seems to do nothing.

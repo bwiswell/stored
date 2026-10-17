@@ -89,10 +89,21 @@ presence token comes back with it.
 CLI:
 
 ```sh
-stored -c stored.toml validate-config   # load + summarize config
+stored -c stored.toml validate-config   # load, check + summarize config
 stored -c stored.toml run               # the chronicler daemon
 stored -c stored.toml migrate           # create/reconcile stream tables
 stored -c stored.toml prune             # force a TTL sweep
+```
+
+`validate-config` refuses what `run` would refuse at start (0.4.1): an identity
+that isn't one key segment, and a `[zenoh]` table `run` can't open a session
+from (no `mode`, or a wrong value), loaded as `run` loads it. With no table, `run`
+reads the session from `ZEARED_SESSION_*`, which `validate-config` leaves
+unchecked, importing no transport. Its summary ends `zenoh=table` or `zenoh=env`
+to say which:
+
+```text
+ok: identity='chronicler-1' backend='sqlite' db_path='chronicle.db' streams=2 zenoh=table
 ```
 
 ## systemd
@@ -144,4 +155,4 @@ hub restart would restart every daemon on the mesh at once. A session without
 
 `identity` must be one key segment (no `/`, `*`, `$`, `?` or `#`), since it is the
 key's last segment; `run` refuses any other with a `ConfigError` before it opens
-anything.
+anything, and `validate-config` does too (`stored.config.check_identity`).
