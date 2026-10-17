@@ -48,6 +48,11 @@ historian needs. Streams with no `time_field` are unchanged: `_event_at` is `NUL
 and everything keys on `_issued_at` exactly as before. (A single field, no fallback
 chain — deliberate; revisit only if a stream needs one.)
 
+A row whose optional `time_field` was left unset has no event time, and no place on
+the axis: `iter` and paging skip it, the latest projection leaves it out, and the
+reaper expires it on `_issued_at`, as on a stream without a `time_field`. `query`
+still returns it.
+
 Range queries meet this axis: `store.query(..., since=…, until=…)` bounds accept not
 only ISO / relative (`'-1h'`) strings but also **unix epoch seconds** and `datetime`
 objects — so a service maps a request's numeric `from_ts` / `to_ts` straight through,
@@ -94,7 +99,9 @@ last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | Non
 - **Newest-wins, order-independent.** On each flush the same batch that appends to
   history is upserted into the projection, overwriting a key only when the incoming
   row's temporal axis (`time_column`) is **≥** the stored one — so a late or
-  redelivered older sample never clobbers a newer last-known.
+  redelivered older sample never clobbers a newer last-known. A row with no event
+  time stays out, and one a projection kept before 0.4.0 yields to the first timed
+  row.
 - **Its own, longer retention.** `latest_retention` expires the projection
   separately from the history `retention` — the last-known **survives** history
   expiry (a 30-day last-position over a 7-day history). `None` keeps it forever.
@@ -209,7 +216,8 @@ them on the next `register`/`migrate`.
   forever), validated at `register`;
 - `Reaper.sweep` deletes rows whose temporal axis (`_event_at` for an event-time
   stream, else `_issued_at`) is older than `now − retention`, returning the exact
-  count;
+  count. On an event-time stream, a row with no event time expires on `_issued_at`;
+  before 0.4.0 it never expired, since `NULL` is older than no cutoff;
 - driven by `Store.prune`, the `prune` CLI, and the daemon's periodic reaper
   (`prune_interval`, default 300 s; `0` disables).
 

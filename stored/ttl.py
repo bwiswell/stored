@@ -4,20 +4,52 @@ Unlike zeared's lazy last-value expiry, ``stored`` runs an active sweeper: a
 ``DELETE`` of rows older than each stream's retention horizon. It is invoked on
 demand here (``Store.prune`` / the ``prune`` CLI); periodic scheduling is wired
 into the daemon in M4.
+
+A stream with a ``time_field`` expires on event time (``_event_at``). A row with
+none (its optional ``time_field`` was unset) has no place on that axis, so it
+expires on ``_issued_at``, as it would on a stream without a ``time_field``.
+Before 0.4.0 it never expired: ``NULL`` is older than no cutoff.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from . import schema
 from ._time import parse_duration, utcnow
 from .log import get_logger
 
 if TYPE_CHECKING:
+    import datetime
+
     from .backends.base import StorageBackend
     from .registry import Stream, StreamRegistry
 
 _log = get_logger('ttl')
+
+
+def delete_before_sql(
+    table: str,
+    column: str,
+    cutoff: datetime.datetime,
+    fallback: str | None = None,
+) -> tuple[str, list[Any]]:
+    """The ``DELETE`` that expires ``table``'s rows older than ``cutoff``, and its parameters.
+
+    Args:
+        table: The table to expire rows from.
+        column: The timestamp column compared with ``cutoff``.
+        cutoff: Rows strictly older than this are removed.
+        fallback: A timestamp column compared instead where ``column`` is ``NULL``,
+            or ``None`` to leave such rows alone.
+
+    Returns:
+        The statement (identifiers quoted, values bound) and its parameters.
+    """
+    sql = f'DELETE FROM "{table}" WHERE "{column}" < ?'  # noqa: S608 (identifiers are quoted; values are bound)
+    if fallback is None:
+        return sql, [cutoff]
+    return f'{sql} OR ("{column}" IS NULL AND "{fallback}" < ?)', [cutoff, cutoff]
 
 
 class Reaper:
@@ -39,13 +71,15 @@ class Reaper:
 
         The append history expires on ``retention``; a latest-per-key projection
         expires on its own (usually longer) ``latest_retention``. Both key off the
-        stream's temporal axis (``time_column``). Horizons left ``None`` are skipped.
+        stream's temporal axis (``time_column``), and a row with no event time on
+        ``_issued_at`` (see the module docstring). Horizons left ``None`` are skipped.
         """
         now = utcnow()
         removed = 0
+        fallback = schema.ISSUED_AT if stream.time_column == schema.EVENT_AT else None
         if stream.retention is not None:
             cutoff = now - parse_duration(stream.retention)
-            history = self._backend.delete_before(stream.table, stream.time_column, cutoff)
+            history = self._backend.delete_before(stream.table, stream.time_column, cutoff, fallback=fallback)
             if history:
                 _log.info(
                     'pruned %d rows from %s (retention=%s, by=%s)',
@@ -57,7 +91,7 @@ class Reaper:
             removed += history
         if stream.has_latest and stream.latest_retention is not None:
             cutoff = now - parse_duration(stream.latest_retention)
-            latest = self._backend.delete_before(stream.latest_table, stream.time_column, cutoff)
+            latest = self._backend.delete_before(stream.latest_table, stream.time_column, cutoff, fallback=fallback)
             if latest:
                 _log.info(
                     'pruned %d rows from %s (latest_retention=%s, by=%s)',
@@ -74,4 +108,4 @@ class Reaper:
         return sum(self.sweep_stream(stream) for stream in self._registry.all())
 
 
-__all__ = ['Reaper']
+__all__ = ['Reaper', 'delete_before_sql']

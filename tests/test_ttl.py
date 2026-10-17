@@ -18,6 +18,14 @@ class Obs(s.Seared):
     observed_at: float = s.Float(required=True)
 
 
+@s.seared
+class Sighting(s.Seared):
+    """An optional event time: a row may carry none."""
+
+    id: int = s.Int(required=True)
+    observed_at: float | None = s.Float(default=None)
+
+
 class Meta:
     def __init__(self, key, ts, issued_at):
         self.key_expr = key
@@ -70,6 +78,28 @@ def test_prune_keys_on_event_time_not_delivery_time(tmp_path):
 
         assert store.prune() == 1  # the row old by event time, though issued recently
         assert [r.id for r in store.query(Obs)] == [2]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('backend', ['sqlite', 'duckdb'])
+def test_a_row_with_no_event_time_expires_on_its_issue_time(tmp_path, backend):
+    # Until 0.4.0 it never expired: retention compared `_event_at`, and NULL is older
+    # than no cutoff. It has no event time, so it expires as on a stream without one.
+    if backend == 'duckdb':
+        pytest.importorskip('duckdb')
+    store = Store(str(tmp_path / f'c.{backend}'), backend=backend, flush_secs=0)
+    try:
+        store.register(Sighting, retention='7d', time_field='observed_at')
+        now = datetime.datetime.now(datetime.UTC)
+        old = now - datetime.timedelta(days=8)
+        store.record(Sighting, Sighting(id=1), meta=Meta('k1', 't1', old))  # issued long ago
+        store.record(Sighting, Sighting(id=2), meta=Meta('k2', 't2', now))  # issued now
+        store.record(Sighting, Sighting(id=3, observed_at=now.timestamp()), meta=Meta('k3', 't3', old))
+        store.flush()
+
+        assert store.prune() == 1
+        assert sorted(r.id for r in store.query(Sighting)) == [2, 3]  # the third keys on its event time
     finally:
         store.close()
 
