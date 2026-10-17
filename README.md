@@ -35,26 +35,26 @@ sister that remembers.
 
 ## Install
 
-Each release is tagged `v<version>` on GitHub (the first is `v0.3.5`). Install one
-by its tag:
+Each release is tagged `v<version>` on GitHub (the first is `v0.3.5`; the latest is
+`v0.4.0`). Install one by its tag:
 
 ```sh
 # persist/query seared objects + the Zenoh chronicler (stdlib sqlite3 backend)
-uv add git+https://github.com/bwiswell/stored --tag v0.3.5
+uv add git+https://github.com/bwiswell/stored --tag v0.4.0
 
 # with the DuckDB backend (analytics upgrade)
-uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.3.5"
+uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.4.0"
 ```
 
 `uv add` records the tag as the dependency's source:
 
 ```toml
 [tool.uv.sources]
-stored = { git = "https://github.com/bwiswell/stored", tag = "v0.3.5" }
+stored = { git = "https://github.com/bwiswell/stored", tag = "v0.4.0" }
 ```
 
 **The tag is the pin.** uv doesn't check a version specifier such as
-`stored>=0.3,<0.4` against a git source: it takes whatever the source points at,
+`stored>=0.4,<0.5` against a git source: it takes whatever the source points at,
 and a source without a tag points at the tip of `master`. Moving to a new release
 means moving the tag.
 
