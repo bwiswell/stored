@@ -48,9 +48,10 @@ def _decoder[M: s.Seared](cls: type[M]) -> Callable[[dict[str, Any]], M]:
     return lambda columns: rehydrate(cls, columns)
 
 
-def _meta_decoder[M: s.Seared](cls: type[M]) -> Callable[[dict[str, Any]], tuple[M, LatestMeta]]:
+def _meta_decoder[M: s.Seared](cls: type[M], stream: Stream) -> Callable[[dict[str, Any]], tuple[M, LatestMeta]]:
     """A latest-projection row's columns → the instance, and what the projection knows beside it."""
-    return lambda columns: (rehydrate(cls, columns), meta_of(columns))
+    keeps_runs = stream.latest_run_gap is not None
+    return lambda columns: (rehydrate(cls, columns), meta_of(columns, keeps_runs=keeps_runs))
 
 
 def _make_backend(backend: str, path: str) -> StorageBackend:
@@ -620,7 +621,9 @@ class Store:
         """:meth:`query_latest`, each row paired with what the projection knows beside it."""
         stream = self._require_latest(cls, 'query_latest_with_meta')
         window = parse_window(since=since, until=until, limit=limit, order=order)
-        return self._select(_meta_decoder(cls), stream, stream.latest_table, window, key or '', filters or None, where)
+        return self._select(
+            _meta_decoder(cls, stream), stream, stream.latest_table, window, key or '', filters or None, where
+        )
 
     def query_latest_page_with_meta[M: s.Seared](
         self,
@@ -639,7 +642,7 @@ class Store:
         stream = self._require_latest(cls, 'query_latest_page_with_meta')
         window = parse_window(since=since, until=until, limit=limit, order=order)
         return self._select_page(
-            _meta_decoder(cls), stream, stream.latest_table, window, key or '', filters or None, where, after
+            _meta_decoder(cls, stream), stream, stream.latest_table, window, key or '', filters or None, where, after
         )
 
     def iter_latest_with_meta[M: s.Seared](
@@ -657,7 +660,9 @@ class Store:
     ) -> Generator[tuple[M, LatestMeta]]:
         """:meth:`iter_latest`, each row paired with what the projection knows beside it."""
         stream = self._require_latest(cls, 'iter_latest_with_meta')
-        return self._iter_latest(_meta_decoder(cls), stream, key, since, until, limit, order, chunk, where, filters)
+        return self._iter_latest(
+            _meta_decoder(cls, stream), stream, key, since, until, limit, order, chunk, where, filters
+        )
 
     def _iter_latest[R](
         self,
@@ -743,7 +748,9 @@ class Store:
             QueryError: If ``key`` does not name exactly the projection's key fields.
         """
         columns = self._latest_columns(cls, key, 'latest_with_meta')
-        return (rehydrate(cls, columns), meta_of(columns)) if columns is not None else None
+        if columns is None:
+            return None
+        return _meta_decoder(cls, self._require_latest(cls, 'latest_with_meta'))(columns)
 
     def _latest_columns(self, cls: type[s.Seared], key: dict[str, Any], what: str) -> dict[str, Any] | None:
         """The newest latest-projection row for ``key``'s entity (or entities), as columns."""

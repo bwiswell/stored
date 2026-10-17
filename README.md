@@ -35,19 +35,35 @@ sister that remembers.
 
 ## Install
 
+Each release is tagged `v<version>` on GitHub (the first is `v0.3.5`). Install one
+by its tag:
+
 ```sh
 # persist/query seared objects + the Zenoh chronicler (stdlib sqlite3 backend)
-uv add git+https://github.com/bwiswell/stored
+uv add git+https://github.com/bwiswell/stored --tag v0.3.5
 
 # with the DuckDB backend (analytics upgrade)
-uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored"
+uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.3.5"
 ```
+
+`uv add` records the tag as the dependency's source:
+
+```toml
+[tool.uv.sources]
+stored = { git = "https://github.com/bwiswell/stored", tag = "v0.3.5" }
+```
+
+**The tag is the pin.** uv doesn't check a version specifier such as
+`stored>=0.3,<0.4` against a git source: it takes whatever the source points at,
+and a source without a tag points at the tip of `master`. Moving to a new release
+means moving the tag.
 
 The Zenoh chronicler ships with the base install (`zeared` is a core dependency).
 The `stored[zenoh]` extra was retired in 0.3.0 — it had been an empty alias since the
 chronicler moved into the base install.
 
-Requires Python ≥ 3.14.
+Requires Python ≥ 3.14. What changed in each release, and what may break on the way,
+is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Core: persist & query seared objects
 
@@ -217,7 +233,20 @@ uv run pytest tests/
 
 The hooks are the house set (`.pre-commit-config.yaml`): `ruff check`, `ruff format`,
 `deptry`, `ty check` — the same gate `seared` and `zeared` run, so a commit that passes
-here passes there.
+here passes there. A fifth refuses any commit on `master`.
+
+**Branches and releases.**
+- **`master` holds released commits only,** and moves only by merge.
+- **A release is a `version/x.y.z` branch** off `master`.
+- **Work on it happens in `feat/…` and `fix/…` branches,** each a pull request
+  squash-merged into the version branch. Each adds its own lines to the `unreleased`
+  entry at the top of `CHANGELOG.md`.
+- **Once those are all in, one `chore: version bump` commit** on the version branch
+  bumps the version in `pyproject.toml` and `stored/__init__.py` together (a test
+  checks that they agree), refreshes the lockfile, and dates the changelog entry.
+- **The version branch then merges into `master`.** There, the `Release Tag` workflow
+  (`.github/workflows/release-tag.yml`) tags it `v<version>` and publishes a GitHub
+  release.
 
 Tests mirror the source layout. The mesh tests spin up a loopback Zenoh peer
 (`zeared` is a core dependency, always present); the DuckDB-backend tests need the

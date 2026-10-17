@@ -27,6 +27,9 @@ config layer.
 | `archive`    | `str \| None` | `None`  | Cold-archival horizon (roadmap).         |
 | `index`      | `list[str]`   | `[]`    | Extra field dimensions to filter on.     |
 | `time_field` | `str \| None` | `None`  | Payload field to key retention/queries on (domain event time); `None` uses mesh `_issued_at`. See storage-model. |
+| `latest`     | `LatestSpec \| None` | `None` | A newest-per-key projection: `key` (field names) and `retention` (`None` = forever). `[streams.latest]` in TOML. |
+
+`run`, `migrate` and `prune` all register a stream with every field above.
 
 ## From the environment
 

@@ -21,6 +21,7 @@ import zeared as z
 from ..errors import ConfigError
 from ..log import configure, get_logger
 from ..store import Store
+from ..streams import register_stream
 from .chronicler import Chronicler
 from .session import open_session
 
@@ -131,8 +132,18 @@ class Daemon:
         chronicler = Chronicler(store, session)
         for spec in cfg.streams:
             cls = _resolve(spec)
-            chronicler.add(cls, retention=spec.retention, index=tuple(spec.index))
-            _log.info('recording %s (retention=%s)', cls.__name__, spec.retention)
+            # The whole spec, as `migrate` and `prune` register it. The chronicler
+            # registers a class itself only when it finds it unregistered, and
+            # then with retention and indexes alone.
+            register_stream(store, spec, cls)
+            chronicler.add(cls)
+            _log.info(
+                'recording %s (retention=%s, time_field=%s, latest=%s)',
+                cls.__name__,
+                spec.retention,
+                spec.time_field,
+                spec.latest.key if spec.latest is not None else None,
+            )
 
         self._store = store
         self._session = session

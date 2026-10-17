@@ -4,7 +4,7 @@ import time
 
 import pytest
 import zeared as z
-from _support_messages import Beacon
+from _support_messages import Beacon, Sighting
 
 from stored import Store, StoredConfig
 from stored.config import StreamSpec
@@ -74,6 +74,49 @@ def test_daemon_records_and_serves(session):
 
         served = Beacon.query(id=1, params={'limit': '10'}, timeout=2.0)
         assert {b.v for b in served} == {5, 6}
+    finally:
+        daemon.stop()
+        daemon.shutdown()
+        store.close()
+
+
+def test_daemon_applies_the_whole_stream_spec(session):
+    # Until 0.3.5 `run` registered a stream with its retention and indexes only,
+    # so a configured `time_field` and `[streams.latest]` did nothing there.
+    z.session = session
+    config = StoredConfig.load(
+        {
+            'identity': 'd1',
+            'zenoh': {'mode': 'peer'},
+            'streams': [
+                {
+                    'cls': '_support_messages:Sighting',
+                    'retention': '7d',
+                    'time_field': 'at',
+                    'latest': {'key': ['id'], 'retention': '30d'},
+                }
+            ],
+            'prune_interval': 0,
+        }
+    )
+    store = Store(':memory:', flush_secs=0)
+    daemon = Daemon(config, session=session, store=store)
+    try:
+        daemon.start()
+        stream = store.registry.get(Sighting)
+        assert (stream.time_field, stream.latest_key, stream.latest_retention) == ('at', ('id',), '30d')
+
+        Sighting(id=1, at=1000.0).send()
+        Sighting(id=1, at=2000.0).send()
+        wait()
+
+        # The projection keeps the newest by event time.
+        assert store.latest(Sighting, id=1).at == 2000.0
+        # Retention keys on the event time: both rows are decades past '7d',
+        # though they were delivered a moment ago. The projection, on '30d', too.
+        assert store.counts(Sighting) == (2, 1)
+        store.prune()
+        assert store.counts(Sighting) == (0, 0)
     finally:
         daemon.stop()
         daemon.shutdown()

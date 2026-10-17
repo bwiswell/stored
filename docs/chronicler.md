@@ -48,9 +48,11 @@ back as a properly-typed `Telemetry` instance. Bad input → an error reply.
 ## The daemon
 
 `python -m stored run` loads config, opens a store + timestamped session,
-resolves and subscribes every configured stream, starts the periodic reaper,
-signals `sd_notify(READY=1)`, and runs until SIGTERM/SIGINT — then tears down in
-order (reaper → chronicler → `z.release(session)` → store).
+resolves every configured stream, registers it with its whole `StreamSpec`
+(retention, indexes, `time_field` and `[streams.latest]`, exactly as `migrate` and
+`prune` register it) and subscribes it, starts the periodic reaper, signals
+`sd_notify(READY=1)`, and runs until SIGTERM/SIGINT — then tears down in order
+(reaper → chronicler → `z.release(session)` → store).
 
 CLI:
 
@@ -63,6 +65,7 @@ stored -c stored.toml prune             # force a TTL sweep
 
 ## systemd
 
-Production is a systemd unit (`systemd/stored.service`, `Type=notify`); health
-is systemd supervision + Zenoh liveliness — **no HTTP health port**. Logs go to
-stdout → journald. Containers are dev/CI only.
+Production is a systemd unit (`systemd/stored.service`, `Type=notify`), which
+runs `stored -c /etc/stored/stored.toml run`. The daemon signals readiness with
+`sd_notify(READY=1)` and is supervised by systemd — **no HTTP health port**. Logs
+go to stdout → journald. Containers are dev/CI only.
