@@ -8,7 +8,7 @@ rehydration; scalar fields are additionally projected into typed columns.
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import enum
 import itertools
 import pathlib
@@ -42,7 +42,7 @@ class Meta(Protocol):
 
     key_expr: str
     timestamp: str | None
-    issued_at: datetime.datetime | None
+    issued_at: dt.datetime | None
     source_info: str | None
     schema: str | None
 
@@ -52,12 +52,12 @@ class Meta(Protocol):
 _synth_counter = itertools.count()
 
 
-def _synth_ts(now: datetime.datetime) -> str:
+def _synth_ts(now: dt.datetime) -> str:
     """Return a unique, lexicographically sortable ``_ts_hlc`` token for ``now``.
 
     ``now`` is treated as UTC (naive or aware) when deriving the epoch prefix.
     """
-    micros = int(now.replace(tzinfo=datetime.UTC).timestamp() * 1_000_000)
+    micros = int(now.replace(tzinfo=dt.UTC).timestamp() * 1_000_000)
     return f'{micros:020d}-{next(_synth_counter):08d}'
 
 
@@ -65,7 +65,7 @@ def _column_value(value: Any) -> Any:
     """Coerce a native field value into a backend-bindable scalar."""
     if value is None:
         return None
-    if isinstance(value, datetime.datetime):
+    if isinstance(value, dt.datetime):
         return to_naive_utc(value)
     if isinstance(value, enum.Enum):
         return value.name
@@ -74,7 +74,7 @@ def _column_value(value: Any) -> Any:
     return value
 
 
-def _event_time(value: Any) -> datetime.datetime | None:
+def _event_time(value: Any) -> dt.datetime | None:
     """Normalize a ``time_field`` value to a naive-UTC datetime for ``_event_at``.
 
     A numeric value is read as **unix epoch seconds** (UTC); a ``datetime`` is
@@ -84,11 +84,11 @@ def _event_time(value: Any) -> datetime.datetime | None:
     """
     if value is None:
         return None
-    if isinstance(value, datetime.datetime):
+    if isinstance(value, dt.datetime):
         return to_naive_utc(value)
-    if isinstance(value, datetime.date):
-        return datetime.datetime(value.year, value.month, value.day)
-    return datetime.datetime.fromtimestamp(value, datetime.UTC).replace(tzinfo=None)
+    if isinstance(value, dt.date):
+        return dt.datetime(value.year, value.month, value.day)
+    return dt.datetime.fromtimestamp(value, dt.UTC).replace(tzinfo=None)
 
 
 def build_row(
@@ -97,7 +97,7 @@ def build_row(
     meta: Meta | None = None,
     *,
     key: str | None = None,
-    recv_at: datetime.datetime | None = None,
+    recv_at: dt.datetime | None = None,
 ) -> dict[str, Any]:
     """Build a table row from ``msg`` and its ``meta``.
 

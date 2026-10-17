@@ -4,7 +4,9 @@ A statement per message is wasteful for every backend (DuckDB is columnar and
 dislikes per-row inserts; SQLite pays per-transaction overhead), so records are
 buffered per table and flushed in batches, by row count or elapsed time, on a
 background thread. Idempotency on the ``(_key_expr, _ts_hlc)`` primary key makes
-redelivery a no-op.
+redelivery a no-op: a sample delivered twice carries its timestamp twice. A
+retained replay does too when its publisher runs zeared 0.4.0 or later; one from
+an older publisher has no timestamp, gets a fresh one, and is a new row.
 
 Backend I/O is serialized through a shared lock (the owning ``Store``'s), so the
 periodic flush thread never touches the connection concurrently with a query.
@@ -100,7 +102,9 @@ class Writer:
 
         On every flush, each history batch is also upserted (newest-wins on
         ``compare_column``) into ``latest_table``, keyed by ``key_columns`` — and, with
-        ``run_gap_s``, each entity's run start is kept beside it.
+        ``run_gap_s``, each entity's run start is kept beside it. A row with no
+        ``compare_column`` value (no event time) stays out: it has no place on the axis
+        the projection is newest on.
         """
         self._latest[table] = (latest_table, key_columns, compare_column, run_gap_s)
 
@@ -131,9 +135,11 @@ class Writer:
                     latest = self._latest.get(table)
                     if latest is not None:
                         latest_table, key_columns, compare_column, run_gap_s = latest
-                        self._backend.upsert_latest(
-                            latest_table, rows, key_columns, compare_column, run_gap_s=run_gap_s
-                        )
+                        timed = [row for row in rows if row.get(compare_column) is not None]
+                        if timed:
+                            self._backend.upsert_latest(
+                                latest_table, timed, key_columns, compare_column, run_gap_s=run_gap_s
+                            )
                 except Exception:  # noqa: BLE001 — a writer thread must not die of one bad batch
                     _log.exception('flush of %d rows to %s failed (dropped)', len(rows), table)
 

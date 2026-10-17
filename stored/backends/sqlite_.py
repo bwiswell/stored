@@ -21,7 +21,7 @@ query threads), so cross-thread use over the single connection is safe.
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import decimal
 import sqlite3
 from typing import TYPE_CHECKING, Any
@@ -30,6 +30,7 @@ from ..dialect import DEFAULT_DIALECT, Dialect
 from ..errors import BackendError
 from ..latest import upsert_params, upsert_sql
 from ..log import get_logger
+from ..ttl import delete_before_sql
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,16 +46,16 @@ def _register_adapters() -> None:
     ordering is correct independent of the converter; the same adapter formats both stored
     values and bound query bounds, keeping range comparisons self-consistent.
     """
-    sqlite3.register_adapter(datetime.datetime, lambda v: v.isoformat(sep=' '))
-    sqlite3.register_adapter(datetime.date, lambda v: v.isoformat())
-    sqlite3.register_adapter(datetime.time, lambda v: v.isoformat())
+    sqlite3.register_adapter(dt.datetime, lambda v: v.isoformat(sep=' '))
+    sqlite3.register_adapter(dt.date, lambda v: v.isoformat())
+    sqlite3.register_adapter(dt.time, lambda v: v.isoformat())
     sqlite3.register_adapter(decimal.Decimal, str)
-    sqlite3.register_adapter(datetime.timedelta, lambda v: repr(v.total_seconds()))
-    sqlite3.register_converter('TIMESTAMP', lambda b: datetime.datetime.fromisoformat(b.decode()))
-    sqlite3.register_converter('DATE', lambda b: datetime.date.fromisoformat(b.decode()))
-    sqlite3.register_converter('TIME', lambda b: datetime.time.fromisoformat(b.decode()))
+    sqlite3.register_adapter(dt.timedelta, lambda v: repr(v.total_seconds()))
+    sqlite3.register_converter('TIMESTAMP', lambda b: dt.datetime.fromisoformat(b.decode()))
+    sqlite3.register_converter('DATE', lambda b: dt.date.fromisoformat(b.decode()))
+    sqlite3.register_converter('TIME', lambda b: dt.time.fromisoformat(b.decode()))
     sqlite3.register_converter('DECIMAL', lambda b: decimal.Decimal(b.decode()))
-    sqlite3.register_converter('INTERVAL', lambda b: datetime.timedelta(seconds=float(b)))
+    sqlite3.register_converter('INTERVAL', lambda b: dt.timedelta(seconds=float(b)))
 
 
 _register_adapters()
@@ -259,15 +260,17 @@ class SQLiteBackend:
         self,
         table: str,
         column: str,
-        cutoff: datetime.datetime,
+        cutoff: dt.datetime,
+        *,
+        fallback: str | None = None,
     ) -> int:
-        """Delete rows of ``table`` whose ``column`` is older than ``cutoff``.
+        """Delete rows of ``table`` whose ``column`` (or ``fallback``, where it is ``NULL``) is older than ``cutoff``.
 
         Returns the number of rows removed (``cursor.rowcount``).
         """
-        sql = f'DELETE FROM "{table}" WHERE "{column}" < ?'  # noqa: S608 (quoted identifiers)
+        sql, params = delete_before_sql(table, column, cutoff, fallback)
         try:
-            cursor = self._conn.execute(sql, [cutoff])
+            cursor = self._conn.execute(sql, params)
             self._conn.commit()
         except sqlite3.Error as exc:
             msg = f'delete_before({table!r}) failed: {exc}'

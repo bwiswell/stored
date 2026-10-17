@@ -4,11 +4,13 @@
 always imports. It wires the seared-only core's :class:`~stored.store.Store` to a
 ``zeared`` subscriber (record) and queryable (serve history). The core itself
 imports no ``zeared`` at runtime — a Store-only ``import stored`` stays
-transport-free (the top-level ``Chronicler`` re-export is lazy).
+transport-free (the top-level ``Chronicler`` re-export is lazy). The daemon's
+presence on the mesh is a :class:`ChroniclerPresence` token.
 """
 
 from __future__ import annotations
 
 from .chronicler import Chronicler
+from .presence import ChroniclerPresence
 
-__all__ = ['Chronicler']
+__all__ = ['Chronicler', 'ChroniclerPresence']

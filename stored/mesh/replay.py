@@ -3,16 +3,16 @@
 A queryable answers *one asker*. A **replay** re-publishes what was recorded so
 that any number of ordinary subscribers see it through their ordinary
 ``on_message`` path — which is what lets a pipeline stage be fed a historical
-window with no client code at all: re-run yesterday through the collator, warm a
+window with no client code at all: re-run yesterday through a pipeline stage, warm a
 cache after a restart, drive a lab run from real recorded traffic.
 
 **Where a replay lands.** Zeared publishes on *declared* templates only, so a
 replayable class declares its replay scope in ``EXTRA_TOPICS``:
 
 ```python
-class Location(zeared.Message):
-    TOPIC = 'rio/telemetry/location/{source}'
-    EXTRA_TOPICS = ('rio/replay/telemetry/location/{source}',)
+class Reading(zeared.Message):
+    TOPIC = 'live/reading/{source}'
+    EXTRA_TOPICS = ('replay/reading/{source}',)
 ```
 
 That single declaration carries the whole isolation story. Subscribers of the
@@ -27,13 +27,20 @@ from a live one.
 **A replay never retains.** Every publish goes out with ``retain=False``, so
 replaying a ``RETAINED`` class cannot clobber the live retained value with a
 historical one.
+
+**A row with no key is skipped, not fatal.** zeared refuses a slot value that
+would split its key segment (a ``/`` in a single-segment slot), and such a row
+has no key to go out on. The replay skips it, logs the first, and counts them
+all on ``skipped``; the rows around it still go out. The destination itself is
+checked before anything is read, so a topic no row could publish on is a
+``ConfigError``, not a replay that skips every row.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
+import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 import zeared as z
@@ -53,10 +60,10 @@ def _event_seconds(value: Any) -> float | None:
     """Read a ``time_field`` value as unix seconds, or ``None`` when it has no time."""
     if value is None:
         return None
-    if isinstance(value, datetime.datetime):
-        return value.replace(tzinfo=value.tzinfo or datetime.UTC).timestamp()
-    if isinstance(value, datetime.date):
-        return datetime.datetime(value.year, value.month, value.day, tzinfo=datetime.UTC).timestamp()
+    if isinstance(value, dt.datetime):
+        return value.replace(tzinfo=value.tzinfo or dt.UTC).timestamp()
+    if isinstance(value, dt.date):
+        return dt.datetime(value.year, value.month, value.day, tzinfo=dt.UTC).timestamp()
     return float(value)
 
 
@@ -78,6 +85,11 @@ class ReplayHandle:
     def sent(self) -> int:
         """Rows published so far."""
         return self._progress['sent']
+
+    @property
+    def skipped(self) -> int:
+        """Rows skipped so far, because their key could not be rendered."""
+        return self._progress.get('skipped', 0)
 
     @property
     def done(self) -> bool:
@@ -145,17 +157,21 @@ class Replayer:
             max_rate: Ceiling in rows per second, applied whatever ``speed`` says.
             chunk: Rows per page read from the store.
             stop: Set this event to end the replay early.
-            progress: Optional ``{'sent': int}`` dict updated as rows go out.
+            progress: Optional ``{'sent': int}`` dict updated as rows go out. A
+                ``'skipped'`` count is added to it: rows whose key could not be
+                rendered, which are not published.
             **filters: Equality filters on indexed field dimensions.
 
         Returns:
-            The number of rows published.
+            The number of rows published. Skipped rows are not counted.
 
         Raises:
-            ConfigError: If the destination cannot be resolved, or ``speed`` asks for
-                pacing on a stream with no event time.
+            ConfigError: If the destination cannot be resolved, or is one the class
+                cannot publish on, or ``speed`` asks for pacing on a stream with no
+                event time.
         """
         destination = self._resolve_topic(cls, topic)
+        self._check_destination(cls, destination)
         stream = self._store.store.registry.get(cls)
         if speed > 0 and stream.time_field is None:
             msg = (
@@ -164,6 +180,7 @@ class Replayer:
             )
             raise ConfigError(msg)
         counter = progress if progress is not None else {'sent': 0}
+        counter.setdefault('skipped', 0)
         halt = stop if stop is not None else asyncio.Event()
         interval = (1.0 / max_rate) if max_rate else 0.0
         paced = speed > 0 or interval > 0
@@ -176,7 +193,7 @@ class Replayer:
             limit or 'all',
         )
         if paced:
-            return await self._paced(
+            sent = await self._paced(
                 cls,
                 destination,
                 stream.time_field,
@@ -190,17 +207,26 @@ class Replayer:
                 chunk=chunk,
                 **filters,
             )
-        return await self._as_fast_as_possible(
-            cls,
-            destination,
-            counter,
-            halt,
-            since=since,
-            until=until,
-            limit=limit,
-            chunk=chunk,
-            **filters,
-        )
+        else:
+            sent = await self._as_fast_as_possible(
+                cls,
+                destination,
+                counter,
+                halt,
+                since=since,
+                until=until,
+                limit=limit,
+                chunk=chunk,
+                **filters,
+            )
+        if counter['skipped']:
+            _log.warning(
+                'replay %s → %s: skipped %d row(s) with no key to publish on',
+                cls.__name__,
+                destination,
+                counter['skipped'],
+            )
+        return sent
 
     def start[M: z.Message](self, cls: type[M], **options: Any) -> ReplayHandle:
         """Run :meth:`replay` as a background task and return its :class:`ReplayHandle`.
@@ -216,7 +242,7 @@ class Replayer:
             A handle carrying progress, completion, and :meth:`ReplayHandle.stop`.
         """
         halt = asyncio.Event()
-        counter: dict[str, int] = {'sent': 0}
+        counter: dict[str, int] = {'sent': 0, 'skipped': 0}
         task = asyncio.create_task(
             self.replay(cls, stop=halt, progress=counter, **options),
             name=f'replay-{cls.__name__}',
@@ -279,8 +305,7 @@ class Replayer:
                     await asyncio.wait_for(halt.wait(), delay)
                 if halt.is_set():
                     break
-            await z.asend(row, session=self._session, topic=topic, retain=False)
-            counter['sent'] += 1
+            await self._send_row(row, topic, counter)
         return counter['sent']
 
     # -- helpers -----------------------------------------------------------
@@ -292,9 +317,52 @@ class Replayer:
         topic: str,
         counter: dict[str, int],
     ) -> None:
-        """Publish one page in a single thread hop."""
-        await z.asend_batch(cls, page, session=self._session, topic=topic, retain=False)
+        """Publish one page in a single thread hop.
+
+        A row with no key to publish on makes ``z.batch`` discard the whole page,
+        so the page is resent row by row, which skips only that row.
+        """
+        try:
+            await z.asend_batch(cls, page, session=self._session, topic=topic, retain=False)
+        except z.TopicError:
+            for row in page:
+                await self._send_row(row, topic, counter)
+            return
         counter['sent'] += len(page)
+
+    async def _send_row(self, row: z.Message, topic: str, counter: dict[str, int]) -> None:
+        """Publish one row, or skip it (logging the first) if its key can't be rendered."""
+        try:
+            await z.asend(row, session=self._session, topic=topic, retain=False)
+        except z.TopicError as exc:
+            counter['skipped'] += 1
+            if counter['skipped'] == 1:
+                _log.warning(
+                    'replay %s: skipping a row with no key to publish on (%s); later ones are only counted',
+                    type(row).__name__,
+                    exc,
+                )
+            return
+        counter['sent'] += 1
+
+    @staticmethod
+    def _check_destination(message_cls: type[z.Message], topic: str) -> None:
+        """Refuse a destination no row could be published on, before anything is read.
+
+        Renders the template with a placeholder for every field, so it fails only
+        for the destination itself: undeclared, subscribe-only, or with a slot the
+        class doesn't declare. After this, a ``TopicError`` from a send is the
+        row's own, and the row is skipped.
+
+        Raises:
+            ConfigError: If ``topic`` is not one ``message_cls`` can publish on.
+        """
+        placeholders = {attr: 'x' for attr, _wire, _field in message_cls.__seared_fields__}
+        try:
+            message_cls.concrete_topic(topic=topic, **placeholders)
+        except z.TopicError as exc:
+            msg = f'replay({message_cls.__name__}): cannot publish on {topic!r}: {exc}'
+            raise ConfigError(msg) from exc
 
     @staticmethod
     def _resolve_topic(message_cls: type[z.Message], topic: str | None) -> str:

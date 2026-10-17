@@ -1,4 +1,4 @@
-"""DuckDB storage backend (default).
+"""DuckDB storage backend (the optional ``stored[duckdb]`` extra).
 
 Embedded, columnar, single-writer — a natural fit for the sole-writer
 chronicler daemon, and the engine whose native Parquet ``COPY`` makes the
@@ -15,6 +15,7 @@ from ..dialect import Dialect, DuckDBDialect
 from ..errors import BackendError
 from ..latest import upsert_params, upsert_sql
 from ..log import get_logger
+from ..ttl import delete_before_sql
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -203,14 +204,16 @@ class DuckDBBackend:
         table: str,
         column: str,
         cutoff: datetime,
+        *,
+        fallback: str | None = None,
     ) -> int:
-        """Delete rows of ``table`` whose ``column`` is older than ``cutoff``.
+        """Delete rows of ``table`` whose ``column`` (or ``fallback``, where it is ``NULL``) is older than ``cutoff``.
 
         Returns the number of rows removed (via ``DELETE ... RETURNING``).
         """
-        sql = f'DELETE FROM "{table}" WHERE "{column}" < ? RETURNING 1'  # noqa: S608 (identifiers are quoted; values are bound)
+        sql, params = delete_before_sql(table, column, cutoff, fallback)
         try:
-            deleted = self._conn.execute(sql, [cutoff]).fetchall()
+            deleted = self._conn.execute(f'{sql} RETURNING 1', params).fetchall()
         except duckdb.Error as exc:
             msg = f'delete_before({table!r}) failed: {exc}'
             raise BackendError(msg) from exc

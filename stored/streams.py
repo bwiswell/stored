@@ -53,7 +53,8 @@ def resolve_stream_class(spec: StreamSpec) -> type[s.Seared]:
 def register_stream(store: Store, spec: StreamSpec, cls: type[s.Seared]) -> None:
     """Register ``cls`` into ``store`` with everything ``spec`` declares.
 
-    Retention, indexes, the event-time field and the latest projection. The one
+    Retention, the archive horizon, indexes, the event-time field and the latest
+    projection. The one
     place a configured stream becomes a registration, so the daemon's ``run`` and
     the ``migrate`` / ``prune`` verbs register it identically.
 
@@ -67,6 +68,7 @@ def register_stream(store: Store, spec: StreamSpec, cls: type[s.Seared]) -> None
     store.register(
         cls,
         retention=spec.retention,
+        archive=spec.archive,
         index=tuple(spec.index),
         time_field=spec.time_field,
         latest_key=tuple(latest.key) if latest is not None else (),

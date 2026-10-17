@@ -1,6 +1,7 @@
 """The :class:`StorageBackend` protocol.
 
-Every backend (DuckDB now, Postgres later) implements this narrow surface. The
+Every backend (SQLite by default, DuckDB as an extra, Postgres later) implements
+this narrow surface. The
 core — writer, query planner, TTL reaper — depends on the protocol only, never
 on a concrete engine, so a second backend is a drop-in.
 """
@@ -143,6 +144,8 @@ class StorageBackend(Protocol):
         table: str,
         column: str,
         cutoff: datetime,
+        *,
+        fallback: str | None = None,
     ) -> int:
         """Delete rows of ``table`` whose ``column`` is older than ``cutoff``.
 
@@ -150,6 +153,8 @@ class StorageBackend(Protocol):
             table: Target table.
             column: Timestamp column to compare.
             cutoff: Rows strictly older than this are removed.
+            fallback: A timestamp column to compare instead where ``column`` is
+                ``NULL``, which no cutoff matches. ``None`` leaves such rows alone.
 
         Returns:
             The number of rows deleted.

@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 
 import seared as s
 
@@ -21,7 +21,7 @@ class Obs(s.Seared):
 class FakeMeta:
     key_expr = 'robot/1/telemetry'
     timestamp = 'abcd1234abcd1234/01'
-    issued_at = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+    issued_at = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
     source_info = 'peerA'
     schema = '1'
 
@@ -36,7 +36,7 @@ def test_build_row_meta_and_field_columns():
     assert row['id'] == 7
     assert row['name'] == 'a'
     assert row['_ts_source'] == 'recv'
-    assert isinstance(row['_issued_at'], datetime.datetime)
+    assert isinstance(row['_issued_at'], dt.datetime)
     assert row['_payload']
 
 
@@ -70,6 +70,6 @@ def test_event_at_is_none_without_time_field():
 
 def test_event_at_from_unix_seconds_field():
     stream = StreamRegistry().add(Obs, time_field='observed_at')
-    instant = datetime.datetime(2026, 3, 4, 5, 6, 7, tzinfo=datetime.UTC)
+    instant = dt.datetime(2026, 3, 4, 5, 6, 7, tzinfo=dt.UTC)
     row = build_row(stream, Obs(id=1, observed_at=instant.timestamp()), None)
     assert row['_event_at'] == instant.replace(tzinfo=None)

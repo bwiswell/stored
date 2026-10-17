@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 
 import pytest
 import seared as s
@@ -51,14 +51,14 @@ def test_parse_window_bad_time_raises():
 
 
 def test_parse_window_unix_seconds_bound():
-    ts = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.UTC).timestamp()
+    ts = dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC).timestamp()
     window = query.parse_window(since=ts)
-    assert window.start == datetime.datetime(2026, 1, 1, 12, 0)  # naive UTC
+    assert window.start == dt.datetime(2026, 1, 1, 12, 0)  # naive UTC
 
 
 def test_parse_window_datetime_bound():
-    window = query.parse_window(until=datetime.datetime(2026, 3, 1, tzinfo=datetime.UTC))
-    assert window.end == datetime.datetime(2026, 3, 1)
+    window = query.parse_window(until=dt.datetime(2026, 3, 1, tzinfo=dt.UTC))
+    assert window.end == dt.datetime(2026, 3, 1)
 
 
 def test_plan_builds_sql_and_params():
@@ -107,14 +107,14 @@ def test_plan_orders_by_the_full_sort_key():
 
 
 def test_plan_after_adds_a_keyset_predicate():
-    anchor = (datetime.datetime(2026, 1, 1), 'hlc-1', 'k')
+    anchor = (dt.datetime(2026, 1, 1), 'hlc-1', 'k')
     sql, params = query.plan(_stream(), '', query.parse_window(), after=anchor)
     assert '("_issued_at", "_ts_hlc", "_key_expr") > (?, ?, ?)' in sql
     assert params[-3:] == list(anchor)
 
 
 def test_plan_after_flips_with_descending_order():
-    anchor = (datetime.datetime(2026, 1, 1), 'hlc-1', 'k')
+    anchor = (dt.datetime(2026, 1, 1), 'hlc-1', 'k')
     sql, _ = query.plan(_stream(), '', query.parse_window(order='desc'), after=anchor)
     assert '("_issued_at", "_ts_hlc", "_key_expr") < (?, ?, ?)' in sql
 
@@ -147,14 +147,14 @@ def test_plan_can_be_pointed_at_another_table():
 
 def test_plan_spells_key_matching_through_the_dialect():
     loud = _LoudDialect()
-    exact, _ = query.plan(_stream(), 'rio/a', query.parse_window(), dialect=loud)
-    globbed, _ = query.plan(_stream(), 'rio/*', query.parse_window(), dialect=loud)
+    exact, _ = query.plan(_stream(), 'fleet/a', query.parse_window(), dialect=loud)
+    globbed, _ = query.plan(_stream(), 'fleet/*', query.parse_window(), dialect=loud)
     assert 'IS_EXACTLY(_key_expr, ?)' in exact
     assert 'MATCHES(_key_expr, ?)' in globbed
 
 
 def test_plan_defaults_to_the_sqlite_spelling():
-    sql, _ = query.plan(_stream(), 'rio/*', query.parse_window())
+    sql, _ = query.plan(_stream(), 'fleet/*', query.parse_window())
     assert '"_key_expr" GLOB ?' in sql
 
 
@@ -208,7 +208,7 @@ def test_plan_combines_path_filters_with_column_filters():
 
 
 def test_an_anchor_round_trips_through_an_opaque_cursor():
-    anchor = (datetime.datetime(2026, 9, 6, 12, 0, 0, 123456), '0001-abc', 'rio/x/1')
+    anchor = (dt.datetime(2026, 9, 6, 12, 0, 0, 123456), '0001-abc', 'fleet/x/1')
     cursor = query.encode_anchor(anchor)
     assert '=' not in cursor
     assert cursor.isalnum() or set(cursor) <= set('-_') | set(cursor)  # URL-safe alphabet only

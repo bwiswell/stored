@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 
 import pytest
 
@@ -6,16 +6,16 @@ from stored._time import duration_text, parse_duration, to_naive_utc, utcnow
 
 
 def test_parse_duration_units():
-    assert parse_duration('7d') == datetime.timedelta(days=7)
-    assert parse_duration('48h') == datetime.timedelta(hours=48)
-    assert parse_duration('30m') == datetime.timedelta(minutes=30)
-    assert parse_duration('10s') == datetime.timedelta(seconds=10)
-    assert parse_duration('2w') == datetime.timedelta(weeks=2)
+    assert parse_duration('7d') == dt.timedelta(days=7)
+    assert parse_duration('48h') == dt.timedelta(hours=48)
+    assert parse_duration('30m') == dt.timedelta(minutes=30)
+    assert parse_duration('10s') == dt.timedelta(seconds=10)
+    assert parse_duration('2w') == dt.timedelta(weeks=2)
 
 
 def test_parse_duration_accepts_decimals():
-    assert parse_duration('1.5h') == datetime.timedelta(hours=1.5)
-    assert parse_duration('0.5s') == datetime.timedelta(seconds=0.5)
+    assert parse_duration('1.5h') == dt.timedelta(hours=1.5)
+    assert parse_duration('0.5s') == dt.timedelta(seconds=0.5)
 
 
 def test_parse_duration_invalid():
@@ -31,24 +31,24 @@ def test_duration_text_passes_strings_through():
 def test_duration_text_renders_seconds_and_timedeltas():
     assert duration_text(3600) == '3600s'
     assert duration_text(0.5) == '0.5s'
-    assert duration_text(datetime.timedelta(days=7)) == '604800s'
-    assert duration_text(datetime.timedelta(days=1.5)) == '129600s'
+    assert duration_text(dt.timedelta(days=7)) == '604800s'
+    assert duration_text(dt.timedelta(days=1.5)) == '129600s'
 
 
 def test_duration_text_round_trips_through_parse():
-    for value in (90, 0.25, datetime.timedelta(hours=36)):
-        expected = value if isinstance(value, datetime.timedelta) else datetime.timedelta(seconds=value)
+    for value in (90, 0.25, dt.timedelta(hours=36)):
+        expected = value if isinstance(value, dt.timedelta) else dt.timedelta(seconds=value)
         assert parse_duration(duration_text(value)) == expected
 
 
 def test_duration_text_rejects_bad_values():
-    for bad in ('nonsense', -1, float('inf'), datetime.timedelta(seconds=-1), object()):
+    for bad in ('nonsense', -1, float('inf'), dt.timedelta(seconds=-1), object()):
         with pytest.raises(ValueError):
             duration_text(bad)
 
 
 def test_to_naive_utc_strips_tz():
-    aware = datetime.datetime(2026, 1, 1, 12, tzinfo=datetime.UTC)
+    aware = dt.datetime(2026, 1, 1, 12, tzinfo=dt.UTC)
     naive = to_naive_utc(aware)
     assert naive.tzinfo is None
     assert naive.hour == 12

@@ -48,13 +48,25 @@ historian needs. Streams with no `time_field` are unchanged: `_event_at` is `NUL
 and everything keys on `_issued_at` exactly as before. (A single field, no fallback
 chain — deliberate; revisit only if a stream needs one.)
 
+A row whose optional `time_field` was left unset has no event time, and no place on
+the axis: `iter` and paging skip it, the latest projection leaves it out, and the
+reaper expires it on `_issued_at`, as on a stream without a `time_field`. `query`
+still returns it.
+
 Range queries meet this axis: `store.query(..., since=…, until=…)` bounds accept not
 only ISO / relative (`'-1h'`) strings but also **unix epoch seconds** and `datetime`
 objects — so a service maps a request's numeric `from_ts` / `to_ts` straight through,
-the same unix-seconds axis as `time_field`. `stored` provides these read primitives
-(`query` for ranges, `latest` for last-known); *serving* them over a mesh
-request/reply contract is the consumer's job (the pure-core split — `stored` stays
-`seared`-only and never learns the wire contracts).
+the same unix-seconds axis as `time_field`. The core provides these read primitives
+(`query` for ranges, `latest` for last-known) and stays `seared`-only, never
+learning the wire contracts; `stored.mesh.Binding` serves them over a mesh
+request/reply contract (see [mesh.md](mesh.md)).
+
+**When the field may arrive as `null`.** seared 0.4.0 reads a wire `null` on a field
+that isn't `nullable=True` as absent, so the field takes its default. Declare a
+`time_field` that may be `null` as `X | None` with `default=None` (or
+`nullable=True`): the row then has no event time, as above. With a real default,
+such as `Float(default=0.0)`, a `null` records that default — 1970 for an epoch
+field — so the row expires at the next sweep and sorts first.
 
 ## Type map (scalar fields)
 
@@ -83,9 +95,9 @@ maintains a second table, `latest_<snake>`, alongside the history:
 ```python
 store.register(
     Location, retention='7d', time_field='observed_at',
-    latest_key=('source', 'epc'), latest_retention='30d',
+    latest_key=('source', 'item'), latest_retention='30d',
 )
-last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | None
+last = store.latest(Location, source='site-a', item='i-1')   # -> Location | None
 ```
 
 - **One row per key.** `latest_<snake>` has the *same columns* as the history table
@@ -94,7 +106,9 @@ last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | Non
 - **Newest-wins, order-independent.** On each flush the same batch that appends to
   history is upserted into the projection, overwriting a key only when the incoming
   row's temporal axis (`time_column`) is **≥** the stored one — so a late or
-  redelivered older sample never clobbers a newer last-known.
+  redelivered older sample never clobbers a newer last-known. A row with no event
+  time stays out, and one a projection kept before 0.4.0 yields to the first timed
+  row.
 - **Its own, longer retention.** `latest_retention` expires the projection
   separately from the history `retention` — the last-known **survives** history
   expiry (a 30-day last-position over a 7-day history). `None` keeps it forever.
@@ -126,17 +140,29 @@ last = store.latest(Location, source='rtls', epc='E28…')   # -> Location | Non
   returns `(row, LatestMeta)`, and `LatestMeta.run_start` is naive UTC or `None`.
 
 This is `stored`'s answer to a durable "last-known" query without retaining one mesh
-key per entity — the historian pattern behind e.g. a location store's
-`LastKnownLocation`. Serving that over a mesh contract stays the consumer's job;
-`stored` provides the read primitive.
+key per entity — the historian pattern behind a "where was it last seen" reply.
+`stored` provides the read primitive, and `stored.mesh.Binding.serve_latest` serves
+it over a mesh contract.
 
 ## Schema evolution
 
 `register` runs the backend's additive `ensure_table`: new fields become new
-(nullable) columns; removed/retyped fields are left in place (readable) and a
-migration is a manual step. Each row keeps its `_schema` tag, so mixed-schema
-history is self-describing. `stored migrate` re-runs the reconcile for every
-configured stream.
+(nullable) columns; removed/retyped fields are left in place and a migration is a
+manual step. Each row keeps its `_schema` tag, so mixed-schema history is
+self-describing. `stored migrate` re-runs the reconcile for every configured stream.
+
+A row is read back by loading its `_payload` into the stream's *current* class,
+strictly, so old rows stay readable only while that load succeeds. Two changes
+make the rows written before them raise `seared.ValidationError` from a read (and
+turn a history query into an error reply):
+
+- **a lossy retype** — a `Float` field whose history holds `3.7` retyped to `Int`,
+  or an `Int` holding `2` retyped to `Bool`. New in seared 0.4.0: 0.3.x truncated
+  or coerced the value;
+- **a new required field** — the old rows don't have it.
+
+Give a new field a default, and retype only to a type that holds every stored
+value exactly.
 
 ## Reaching into a `dict`
 
@@ -209,19 +235,21 @@ them on the next `register`/`migrate`.
   forever), validated at `register`;
 - `Reaper.sweep` deletes rows whose temporal axis (`_event_at` for an event-time
   stream, else `_issued_at`) is older than `now − retention`, returning the exact
-  count;
+  count. On an event-time stream, a row with no event time expires on `_issued_at`;
+  before 0.4.0 it never expired, since `NULL` is older than no cutoff;
 - driven by `Store.prune`, the `prune` CLI, and the daemon's periodic reaper
   (`prune_interval`, default 300 s; `0` disables).
 
 ## Archival roadmap (not v1)
 
-The DuckDB choice makes cold archival nearly free, and the day-grain
-`_issued_at` schema is chosen so it stays additive:
+DuckDB (the optional backend) makes cold archival nearly free, and the day-grain
+`_issued_at` schema is chosen so it stays additive. A stream's `archive` horizon is
+recorded at registration today and does nothing yet:
 
 1. **Segment** — `COPY (SELECT … WHERE _issued_at < cutoff) TO
    'archive/<stream>/<date>.parquet' (FORMAT PARQUET, COMPRESSION ZSTD)`, then
    delete those rows from the live DB.
 2. **Cold reads** — queries reaching past the warm horizon `UNION` the live
    table with `read_parquet('archive/<stream>/**/*.parquet')`.
-3. **Tiers** — hot (live DuckDB) → cold (Parquet segments) → expired. Parquet
+3. **Tiers** — hot (the live database) → cold (Parquet segments) → expired. Parquet
    segments are engine-neutral, so the archive outlives the live backend.

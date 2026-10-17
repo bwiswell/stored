@@ -49,3 +49,25 @@ def test_flush_error_is_swallowed():
     writer = Writer(BadBackend(), flush_rows=1, flush_secs=0)
     writer.enqueue('t', {'a': 1})  # flush triggered; error logged, not raised
     writer.close()
+
+
+def test_a_row_with_no_compare_value_stays_out_of_the_projection():
+    class LatestBackend(FakeBackend):
+        def __init__(self):
+            super().__init__()
+            self.upserts = []
+
+        def upsert_latest(self, table, rows, key_columns, compare_column, *, run_gap_s=None):
+            self.upserts.append((table, [row['id'] for row in rows]))
+
+    backend = LatestBackend()
+    writer = Writer(backend, flush_rows=100, flush_secs=0)
+    writer.register_latest('t', 'latest_t', ('id',), '_event_at')
+    writer.enqueue('t', {'id': 1, '_event_at': None})
+    writer.enqueue('t', {'id': 2, '_event_at': 1000.0})
+    writer.flush()
+    writer.enqueue('t', {'id': 3, '_event_at': None})  # a batch with nothing timed: no upsert at all
+    writer.close()
+
+    assert [[row['id'] for row in rows] for _table, rows in backend.batches] == [[1, 2], [3]]  # history: every row
+    assert backend.upserts == [('latest_t', [2])]

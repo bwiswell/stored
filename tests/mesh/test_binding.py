@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
+import datetime as dt
 
 import pytest
 import zeared
@@ -41,6 +41,17 @@ class Event(zeared.Message):
 
 
 @zeared.zeared
+class Mark(zeared.Message):
+    """A reply keyed by a slot, so a row whose slot holds a ``/`` has no key to reply on."""
+
+    TOPIC = 'test/mark/{source}'
+    REQUEST = HistoryRequest
+
+    source: str = zeared.Str(required=True)
+    raised_at: float = zeared.Float(required=True)
+
+
+@zeared.zeared
 class Alarm(zeared.Message):
     """A source contract that normalizes into :class:`Event`."""
 
@@ -53,7 +64,7 @@ class Alarm(zeared.Message):
 class Position(zeared.Message):
     TOPIC = 'test/position'
     source: str = zeared.Str(required=True)
-    epc: str = zeared.Str(required=True)
+    item: str = zeared.Str(required=True)
     x: float = zeared.Float(default=0.0)
     observed_at: float = zeared.Float(required=True)
 
@@ -61,7 +72,7 @@ class Position(zeared.Message):
 @zeared.zeared
 class LastPositionRequest(zeared.Zeared):
     source: str = zeared.Str(default='')
-    epc: str = zeared.Str(default='')
+    item: str = zeared.Str(default='')
 
 
 @zeared.zeared
@@ -73,7 +84,7 @@ class LastPosition(zeared.Message):
     REQUEST = LastPositionRequest
 
     source: str = zeared.Str(required=True)
-    epc: str = zeared.Str(required=True)
+    item: str = zeared.Str(required=True)
     found: bool = zeared.Bool(default=False)
     x: float = zeared.Float(default=0.0)
 
@@ -96,7 +107,7 @@ class Placed(zeared.Message):
     REQUEST = ZoneRequest
 
     source: str = zeared.Str(required=True)
-    epc: str = zeared.Str(required=True)
+    item: str = zeared.Str(required=True)
     zones: dict[str, int] = zeared.Dict(default_factory=dict)
     observed_at: float = zeared.Float(required=True)
     cursor: str = zeared.Str(default='')
@@ -110,13 +121,13 @@ class ZoneOccupant(zeared.Message):
     SCHEMA = '1'
     REQUEST = ZoneRequest
 
-    epc: str = zeared.Str(required=True)
+    item: str = zeared.Str(required=True)
     zone: int = zeared.Int(default=0)
     seen_at: float = zeared.Float(default=0.0)
 
 
 def to_occupant(row: Placed, request: ZoneRequest) -> ZoneOccupant:
-    return ZoneOccupant(epc=row.epc, zone=request.zone, seen_at=row.observed_at)
+    return ZoneOccupant(item=row.item, zone=request.zone, seen_at=row.observed_at)
 
 
 def _zoned_store():
@@ -125,11 +136,11 @@ def _zoned_store():
         Placed,
         index=('source',),
         time_field='observed_at',
-        latest_key=('source', 'epc'),
+        latest_key=('source', 'item'),
         json_index=('zones.department',),
     )
-    for epc, dept, at in [('E1', 5, 1000.0), ('E2', 6, 1001.0), ('E1', 5, 2000.0), ('E3', 5, 2001.0)]:
-        store.record(Placed, Placed(source='rtls', epc=epc, zones={'department': dept}, observed_at=at))
+    for item, dept, at in [('E1', 5, 1000.0), ('E2', 6, 1001.0), ('E1', 5, 2000.0), ('E3', 5, 2001.0)]:
+        store.record(Placed, Placed(source='site-a', item=item, zones={'department': dept}, observed_at=at))
     store.store.flush()
     return store
 
@@ -140,11 +151,11 @@ def from_alarm(alarm: Alarm) -> Event:
 
 
 def to_last_position(row: Position, request: LastPositionRequest) -> LastPosition:
-    return LastPosition(source=request.source, epc=request.epc, found=True, x=row.x)
+    return LastPosition(source=request.source, item=request.item, found=True, x=row.x)
 
 
 def no_position(request: LastPositionRequest) -> LastPosition:
-    return LastPosition(source=request.source, epc=request.epc, found=False)
+    return LastPosition(source=request.source, item=request.item, found=False)
 
 
 # -- helpers -----------------------------------------------------------------
@@ -174,9 +185,9 @@ def _store():
     store.register(Event, index=('source', 'kind'), time_field='raised_at')
     store.register(
         Position,
-        index=('source', 'epc'),
+        index=('source', 'item'),
         time_field='observed_at',
-        latest_key=('source', 'epc'),
+        latest_key=('source', 'item'),
     )
     return store
 
@@ -192,11 +203,11 @@ async def test_record_persists_a_subscribed_contract(session):
         binding.record(Position)
         await _settle()
 
-        Position(source='rtls', epc='E1', x=1.5, observed_at=1000.0).send()
+        Position(source='site-a', item='E1', x=1.5, observed_at=1000.0).send()
         await _settle()
 
         rows = await store.query(Position)
-        assert [(r.epc, r.x) for r in rows] == [('E1', 1.5)]
+        assert [(r.item, r.x) for r in rows] == [('E1', 1.5)]
     finally:
         if binding:
             binding.close()
@@ -211,11 +222,11 @@ async def test_record_normalizes_one_contract_into_another(session):
         binding.record(Alarm, store_as=Event, via=from_alarm)
         await _settle()
 
-        Alarm(source='apollo', at=2000.0).send()
+        Alarm(source='site-b', at=2000.0).send()
         await _settle()
 
         rows = await store.query(Event)
-        assert [(r.source, r.kind, r.raised_at, r.note) for r in rows] == [('apollo', 'alarm', 2000.0, 'mapped')]
+        assert [(r.source, r.kind, r.raised_at, r.note) for r in rows] == [('site-b', 'alarm', 2000.0, 'mapped')]
     finally:
         if binding:
             binding.close()
@@ -229,7 +240,7 @@ async def test_serve_range_answers_a_typed_request(session):
     zeared.session = session
     store, binding = _store(), None
     try:
-        for i, (source, kind) in enumerate([('rtls', 'a'), ('rtls', 'b'), ('apollo', 'a')]):
+        for i, (source, kind) in enumerate([('site-a', 'a'), ('site-a', 'b'), ('site-b', 'a')]):
             store.record(Event, Event(source=source, kind=kind, raised_at=1000.0 + i))
         await store.flush()
 
@@ -240,10 +251,10 @@ async def test_serve_range_answers_a_typed_request(session):
         everything = await zeared.aquery(Event, request=HistoryRequest(), timeout=5.0)
         assert len(everything) == 3
 
-        one_source = await zeared.aquery(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        one_source = await zeared.aquery(Event, request=HistoryRequest(source='site-a'), timeout=5.0)
         assert {r.kind for r in one_source} == {'a', 'b'}
 
-        narrowed = await zeared.aquery(Event, request=HistoryRequest(source='rtls', kind='b'), timeout=5.0)
+        narrowed = await zeared.aquery(Event, request=HistoryRequest(source='site-a', kind='b'), timeout=5.0)
         assert [r.raised_at for r in narrowed] == [1001.0]
 
         windowed = await zeared.aquery(Event, request=HistoryRequest(from_ts=1001.0), timeout=5.0)
@@ -263,7 +274,7 @@ async def test_serve_range_sentinel_policy_is_configurable(session):
     store, binding = _store(), None
     try:
         store.record(Event, Event(source='', kind='a', raised_at=1000.0))
-        store.record(Event, Event(source='rtls', kind='a', raised_at=1001.0))
+        store.record(Event, Event(source='site-a', kind='a', raised_at=1001.0))
         await store.flush()
 
         binding = Binding(store, session=session)
@@ -285,15 +296,15 @@ async def test_serve_latest_projects_a_row_into_its_reply(session):
     zeared.session = session
     store, binding = _store(), None
     try:
-        store.record(Position, Position(source='rtls', epc='E1', x=1.0, observed_at=1000.0))
-        store.record(Position, Position(source='rtls', epc='E1', x=9.0, observed_at=2000.0))
+        store.record(Position, Position(source='site-a', item='E1', x=1.0, observed_at=1000.0))
+        store.record(Position, Position(source='site-a', item='E1', x=9.0, observed_at=2000.0))
         await store.flush()
 
         binding = Binding(store, session=session)
         binding.serve_latest(
             LastPosition,
             of=Position,
-            key=('source', 'epc'),
+            key=('source', 'item'),
             project=to_last_position,
             missing=no_position,
         )
@@ -301,7 +312,7 @@ async def test_serve_latest_projects_a_row_into_its_reply(session):
 
         found = await zeared.aquery_one(
             LastPosition,
-            request=LastPositionRequest(source='rtls', epc='E1'),
+            request=LastPositionRequest(source='site-a', item='E1'),
             timeout=5.0,
         )
         assert found is not None
@@ -309,7 +320,7 @@ async def test_serve_latest_projects_a_row_into_its_reply(session):
 
         absent = await zeared.aquery_one(
             LastPosition,
-            request=LastPositionRequest(source='rtls', epc='NOPE'),
+            request=LastPositionRequest(source='site-a', item='NOPE'),
             timeout=5.0,
         )
         assert absent is not None
@@ -326,15 +337,15 @@ async def test_serve_latest_identity_projection_for_a_double_duty_row(session):
     binding = None
     try:
         store.register(Event, index=('source',), time_field='raised_at', latest_key=('source',))
-        store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0, note='old'))
-        store.record(Event, Event(source='rtls', kind='b', raised_at=2000.0, note='new'))
+        store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0, note='old'))
+        store.record(Event, Event(source='site-a', kind='b', raised_at=2000.0, note='new'))
         await store.flush()
 
         binding = Binding(store, session=session)
         binding.serve_latest(Event, key={'source': 'source'})  # no `of`, no `project`
         await _settle()
 
-        newest = await zeared.aquery_one(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        newest = await zeared.aquery_one(Event, request=HistoryRequest(source='site-a'), timeout=5.0)
         assert newest is not None
         assert newest.note == 'new'
     finally:
@@ -358,7 +369,7 @@ async def test_binding_rejects_incoherent_declarations(session):
         with pytest.raises(ConfigError, match='no latest projection'):
             binding.serve_latest(Event, key=('source',))  # Event has no latest_key here
         with pytest.raises(ConfigError, match='needs project'):
-            binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'))
+            binding.serve_latest(LastPosition, of=Position, key=('source', 'item'))
     finally:
         binding.close()
         await store.close()
@@ -390,7 +401,7 @@ async def test_close_releases_every_handle(session):
         binding.close()  # idempotent
         await _settle()
 
-        Position(source='rtls', epc='E9', x=1.0, observed_at=3000.0).send()
+        Position(source='site-a', item='E9', x=1.0, observed_at=3000.0).send()
         await _settle()
         assert await store.query(Position) == []  # the subscriber is gone
     finally:
@@ -406,7 +417,7 @@ async def test_streamed_range_matches_the_collected_one(session):
     store, binding = _store(), None
     try:
         for i in range(12):
-            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+            store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0 + i))
         await store.flush()
 
         binding = Binding(store, session=session)
@@ -420,7 +431,7 @@ async def test_streamed_range_matches_the_collected_one(session):
         )
         await _settle()
 
-        collected = await zeared.aquery(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        collected = await zeared.aquery(Event, request=HistoryRequest(source='site-a'), timeout=5.0)
         assert [r.raised_at for r in collected] == [1000.0 + i for i in range(12)]
 
         windowed = await zeared.aquery(Event, request=HistoryRequest(from_ts=1008.0), timeout=5.0)
@@ -437,7 +448,7 @@ async def test_streamed_range_reaches_a_streaming_getter(session):
     store, binding = _store(), None
     try:
         for i in range(9):
-            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+            store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0 + i))
         await store.flush()
 
         binding = Binding(store, session=session)
@@ -452,13 +463,55 @@ async def test_streamed_range_reaches_a_streaming_getter(session):
         await store.close()
 
 
+@pytest.mark.parametrize('stream', [False, True], ids=['collected', 'streamed'])
+async def test_a_row_with_no_key_is_skipped_and_the_rest_still_go_out(session, stream):
+    """zeared refuses a ``/`` in a single-segment slot, since it would split the key. Such a
+    row can only come from ``Store.record`` or a ``via=`` mapper. zeared sends each reply on
+    its own, so that one goes to ``on_error`` and the answer still ends, whole and on time."""
+    zeared.session = session
+    store, binding = AsyncStore(stored.Store(':memory:', flush_secs=0)), None
+    store.register(Mark, index=('source',), time_field='raised_at')
+    for i, source in enumerate(['site-a', 'x/y', 'site-a']):
+        store.record(Mark, Mark(source=source, raised_at=1000.0 + i))
+    await store.flush()
+    failures: list[type] = []  # types, not exceptions: a kept traceback keeps the query open
+    errors: list[Exception] = []
+    try:
+        binding = Binding(store, session=session)
+        binding.serve_range(
+            Mark,
+            since='from_ts',
+            stream=stream,
+            on_error=lambda exc, _raw: failures.append(type(exc.__cause__)),
+        )
+        await _settle()
+
+        started = asyncio.get_running_loop().time()
+        replies = await zeared.aquery(
+            Mark,
+            request=HistoryRequest(),
+            timeout=5.0,
+            on_error=lambda exc, _raw: errors.append(exc),
+        )
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert sorted(r.raised_at for r in replies) == [1000.0, 1002.0]
+        assert failures == [zeared.TopicError]
+        assert not errors, errors
+        assert elapsed < 2.0, f'the getter waited {elapsed:.2f}s for an answer the binding had finished'
+    finally:
+        if binding:
+            binding.close()
+        await store.close()
+
+
 async def test_streamed_range_reads_page_by_page(session):
     """The point of streaming: the historian never materializes the window."""
     zeared.session = session
     store, binding = _store(), None
     try:
         for i in range(20):
-            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+            store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0 + i))
         await store.flush()
 
         counting = _CountingBackend(store.store._backend)
@@ -467,7 +520,7 @@ async def test_streamed_range_reads_page_by_page(session):
         binding.serve_range(Event, filters=('source',), stream=True, chunk=5)
         await _settle()
 
-        rows = await zeared.aquery(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        rows = await zeared.aquery(Event, request=HistoryRequest(source='site-a'), timeout=5.0)
         assert len(rows) == 20
         assert counting.selects >= 4, 'a streamed range should read in pages, not one select'
     finally:
@@ -483,14 +536,14 @@ async def test_streamed_range_is_capped_by_default(session):
     store, binding = _store(), None
     try:
         for i in range(10):
-            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+            store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0 + i))
         await store.flush()
 
         binding = Binding(store, session=session)
         binding.serve_range(Event, filters=('source',), stream=True, chunk=2, default_limit=3)
         await _settle()
 
-        rows = await zeared.aquery(Event, request=HistoryRequest(source='rtls'), timeout=5.0)
+        rows = await zeared.aquery(Event, request=HistoryRequest(source='site-a'), timeout=5.0)
         assert len(rows) == 3
     finally:
         if binding:
@@ -511,11 +564,11 @@ async def test_serve_snapshot_answers_one_reply_per_entity(session):
         await _settle()
 
         in_five = await zeared.aquery(Placed, request=ZoneRequest(zone=5), timeout=5.0)
-        assert sorted(r.epc for r in in_five) == ['E1', 'E3']  # one per entity, not per observation
+        assert sorted(r.item for r in in_five) == ['E1', 'E3']  # one per entity, not per observation
         assert {r.observed_at for r in in_five} == {2000.0, 2001.0}  # …and the newest of each
 
         everything = await zeared.aquery(Placed, request=ZoneRequest(), timeout=5.0)
-        assert sorted(r.epc for r in everything) == ['E1', 'E2', 'E3']
+        assert sorted(r.item for r in everything) == ['E1', 'E2', 'E3']
     finally:
         if binding:
             binding.close()
@@ -531,7 +584,7 @@ async def test_serve_snapshot_projects_when_the_reply_differs(session):
         await _settle()
 
         occupants = await zeared.aquery(ZoneOccupant, request=ZoneRequest(zone=5), timeout=5.0)
-        assert sorted(o.epc for o in occupants) == ['E1', 'E3']
+        assert sorted(o.item for o in occupants) == ['E1', 'E3']
         assert {o.zone for o in occupants} == {5}
     finally:
         if binding:
@@ -547,7 +600,7 @@ async def test_serve_snapshot_streams(session):
         binding.serve_snapshot(Placed, filters={'zone': 'zones.department'}, stream=True, chunk=1)
         await _settle()
 
-        seen = [r.epc async for r in zeared.aquery_iter(Placed, request=ZoneRequest(zone=5), timeout=5.0)]
+        seen = [r.item async for r in zeared.aquery_iter(Placed, request=ZoneRequest(zone=5), timeout=5.0)]
         assert sorted(seen) == ['E1', 'E3']
     finally:
         if binding:
@@ -568,7 +621,7 @@ async def test_serve_range_filters_on_a_path_with_no_new_api(session):
         await _settle()
 
         history = await zeared.aquery(Placed, request=ZoneRequest(zone=5), timeout=5.0)
-        assert sorted(r.epc for r in history) == ['E1', 'E1', 'E3']  # every observation in that zone
+        assert sorted(r.item for r in history) == ['E1', 'E1', 'E3']  # every observation in that zone
     finally:
         if binding:
             binding.close()
@@ -584,7 +637,7 @@ async def test_filters_resolve_against_the_declaration(session):
         with pytest.raises(ConfigError, match='neither an indexed dimension'):
             binding.serve_range(Placed, filters={'zone': 'zones.aisle'})  # path never declared
         with pytest.raises(ConfigError, match='neither an indexed dimension'):
-            binding.serve_snapshot(Placed, filters={'epc': 'epc'})  # column never indexed
+            binding.serve_snapshot(Placed, filters={'item': 'item'})  # column never indexed
     finally:
         binding.close()
         await store.close()
@@ -628,14 +681,14 @@ async def test_a_computed_target_picks_the_layer_per_request(session):
             Placed,
             index=('source',),
             time_field='observed_at',
-            latest_key=('source', 'epc'),
+            latest_key=('source', 'item'),
             json_index=('zones.department', 'zones.front_back'),
         )
         store.record(
-            Placed, Placed(source='rtls', epc='E1', zones={'department': 5, 'front_back': 1}, observed_at=1000.0)
+            Placed, Placed(source='site-a', item='E1', zones={'department': 5, 'front_back': 1}, observed_at=1000.0)
         )
         store.record(
-            Placed, Placed(source='rtls', epc='E2', zones={'department': 6, 'front_back': 1}, observed_at=1001.0)
+            Placed, Placed(source='site-a', item='E2', zones={'department': 6, 'front_back': 1}, observed_at=1001.0)
         )
         store.store.flush()
 
@@ -648,14 +701,14 @@ async def test_a_computed_target_picks_the_layer_per_request(session):
             request=ZoneRequest(zone=5, layer='department'),
             timeout=5.0,
         )
-        assert [r.epc for r in by_department] == ['E1']
+        assert [r.item for r in by_department] == ['E1']
 
         by_aisle_side = await zeared.aquery(
             Placed,
             request=ZoneRequest(zone=1, layer='front_back'),
             timeout=5.0,
         )
-        assert sorted(r.epc for r in by_aisle_side) == ['E1', 'E2']
+        assert sorted(r.item for r in by_aisle_side) == ['E1', 'E2']
     finally:
         if binding:
             binding.close()
@@ -707,7 +760,7 @@ async def test_serve_range_projects_a_row_into_a_different_reply(session):
         await _settle()
 
         visits = await zeared.aquery(ZoneOccupant, request=ZoneRequest(zone=5), timeout=5.0)
-        assert sorted(v.epc for v in visits) == ['E1', 'E1', 'E3']  # every observation, projected
+        assert sorted(v.item for v in visits) == ['E1', 'E1', 'E3']  # every observation, projected
         assert {v.zone for v in visits} == {5}
     finally:
         if binding:
@@ -736,7 +789,7 @@ async def test_max_limit_clamps_what_the_caller_asks_for(session):
     store, binding = _store(), None
     try:
         for i in range(20):
-            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+            store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0 + i))
         await store.flush()
 
         binding = Binding(store, session=session)
@@ -776,7 +829,7 @@ async def test_max_limit_bounds_an_omitted_limit_when_streaming(session):
     store, binding = _store(), None
     try:
         for i in range(20):
-            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+            store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0 + i))
         await store.flush()
 
         binding = Binding(store, session=session)
@@ -799,7 +852,7 @@ async def test_serve_range_pages_with_a_cursor_on_the_last_reply_of_a_full_page(
     store, binding = _store(), None
     try:
         for i in range(5):
-            store.record(Event, Event(source='rtls', kind='a', raised_at=1000.0 + i))
+            store.record(Event, Event(source='site-a', kind='a', raised_at=1000.0 + i))
         await store.flush()
 
         binding = Binding(store, session=session)
@@ -832,10 +885,10 @@ async def test_serve_snapshot_pages_current_state_and_a_full_last_page_ends_on_a
 
         # Department 5 holds E1 (last seen 2000) and E3 (2001): pages of one, by last-seen.
         first = await zeared.aquery(Placed, request=ZoneRequest(zone=5, limit=1), timeout=5.0)
-        assert [(r.epc, bool(r.cursor)) for r in first] == [('E1', True)]
+        assert [(r.item, bool(r.cursor)) for r in first] == [('E1', True)]
         second = await zeared.aquery(Placed, request=ZoneRequest(zone=5, limit=1, cursor=first[0].cursor), timeout=5.0)
         # A full page cannot know it is the last, so it hands back a cursor; the page after it is empty.
-        assert [(r.epc, bool(r.cursor)) for r in second] == [('E3', True)]
+        assert [(r.item, bool(r.cursor)) for r in second] == [('E3', True)]
         third = await zeared.aquery(Placed, request=ZoneRequest(zone=5, limit=1, cursor=second[0].cursor), timeout=5.0)
         assert third == []
     finally:
@@ -899,12 +952,12 @@ class Trail(zeared.Message):
     REQUEST = LastPositionRequest
 
     source: str = zeared.Str(required=True)
-    epc: str = zeared.Str(required=True)
+    item: str = zeared.Str(required=True)
     observed_at: float = zeared.Float(default=0.0)
 
 
 def to_trail(row: Position, _request: LastPositionRequest) -> Trail:
-    return Trail(source=row.source, epc=row.epc, observed_at=row.observed_at)
+    return Trail(source=row.source, item=row.item, observed_at=row.observed_at)
 
 
 #: Two spellings of one tag — what a scheme that re-encodes a sale produces.
@@ -913,15 +966,15 @@ _SIBLING = {'E1': 'E1-SOLD', 'E1-SOLD': 'E1'}
 
 def _spellings(request: LastPositionRequest) -> object:
     """Either spelling asks for both; a tag without a sibling stays one value."""
-    sibling = _SIBLING.get(request.epc)
-    return (request.epc, sibling) if sibling else request.epc
+    sibling = _SIBLING.get(request.item)
+    return (request.item, sibling) if sibling else request.item
 
 
 def _two_spellings_store():
     store = _store()
-    store.record(Position, Position(source='rtls', epc='E1', x=1.0, observed_at=1000.0))
-    store.record(Position, Position(source='rtls', epc='E2', x=5.0, observed_at=1500.0))
-    store.record(Position, Position(source='rtls', epc='E1-SOLD', x=9.0, observed_at=2000.0))
+    store.record(Position, Position(source='site-a', item='E1', x=1.0, observed_at=1000.0))
+    store.record(Position, Position(source='site-a', item='E2', x=5.0, observed_at=1500.0))
+    store.record(Position, Position(source='site-a', item='E1-SOLD', x=9.0, observed_at=2000.0))
     return store
 
 
@@ -931,16 +984,18 @@ async def test_an_expanded_filter_reads_every_key_a_thing_is_recorded_under(sess
     try:
         await store.flush()
         binding = Binding(store, session=session)
-        binding.serve_range(Trail, of=Position, project=to_trail, filters=('source', 'epc'), expand={'epc': _spellings})
+        binding.serve_range(
+            Trail, of=Position, project=to_trail, filters=('source', 'item'), expand={'item': _spellings}
+        )
         await _settle()
 
         for asked in ('E1', 'E1-SOLD'):
-            rows = await zeared.aquery(Trail, request=LastPositionRequest(source='rtls', epc=asked), timeout=5.0)
-            assert sorted(r.epc for r in rows) == ['E1', 'E1-SOLD']
-        lone = await zeared.aquery(Trail, request=LastPositionRequest(source='rtls', epc='E2'), timeout=5.0)
-        assert [r.epc for r in lone] == ['E2']
+            rows = await zeared.aquery(Trail, request=LastPositionRequest(source='site-a', item=asked), timeout=5.0)
+            assert sorted(r.item for r in rows) == ['E1', 'E1-SOLD']
+        lone = await zeared.aquery(Trail, request=LastPositionRequest(source='site-a', item='E2'), timeout=5.0)
+        assert [r.item for r in lone] == ['E2']
         # An absent field is not expanded: no filter at all, not "any of nothing".
-        everything = await zeared.aquery(Trail, request=LastPositionRequest(source='rtls'), timeout=5.0)
+        everything = await zeared.aquery(Trail, request=LastPositionRequest(source='site-a'), timeout=5.0)
         assert len(everything) == 3
     finally:
         if binding:
@@ -957,21 +1012,21 @@ async def test_an_expanded_key_answers_the_newest_of_every_key(session):
         binding.serve_latest(
             LastPosition,
             of=Position,
-            key=('source', 'epc'),
+            key=('source', 'item'),
             project=to_last_position,
             missing=no_position,
-            expand={'epc': _spellings},
+            expand={'item': _spellings},
         )
         await _settle()
 
         for asked in ('E1', 'E1-SOLD'):
             found = await zeared.aquery_one(
-                LastPosition, request=LastPositionRequest(source='rtls', epc=asked), timeout=5.0
+                LastPosition, request=LastPositionRequest(source='site-a', item=asked), timeout=5.0
             )
             assert found is not None
             assert (found.found, found.x) == (True, 9.0)  # the sold spelling is the newer
         absent = await zeared.aquery_one(
-            LastPosition, request=LastPositionRequest(source='rtls', epc='NOPE'), timeout=5.0
+            LastPosition, request=LastPositionRequest(source='site-a', item='NOPE'), timeout=5.0
         )
         assert absent is not None
         assert absent.found is False
@@ -988,10 +1043,10 @@ async def test_an_expander_on_a_field_that_filters_nothing_is_refused_at_bind_ti
     binding = Binding(store, session=session)
     try:
         with pytest.raises(ConfigError, match='expand names'):
-            binding.serve_range(Trail, of=Position, project=to_trail, filters=('source',), expand={'epc': _spellings})
+            binding.serve_range(Trail, of=Position, project=to_trail, filters=('source',), expand={'item': _spellings})
         with pytest.raises(ConfigError, match='expand names'):
             binding.serve_latest(
-                LastPosition, of=Position, key=('source', 'epc'), project=to_last_position, expand={'x': _spellings}
+                LastPosition, of=Position, key=('source', 'item'), project=to_last_position, expand={'x': _spellings}
             )
     finally:
         binding.close()
@@ -1004,7 +1059,7 @@ async def test_an_expander_on_a_field_that_filters_nothing_is_refused_at_bind_ti
 @zeared.zeared
 class SightingRequest(zeared.Zeared):
     source: str = zeared.Str(default='')
-    epc: str = zeared.Str(default='')
+    item: str = zeared.Str(default='')
     limit: int = zeared.Int(default=0)
     cursor: str = zeared.Str(default='')
 
@@ -1018,25 +1073,25 @@ class Sighting(zeared.Message):
     REQUEST = SightingRequest
 
     source: str = zeared.Str(required=True)
-    epc: str = zeared.Str(required=True)
+    item: str = zeared.Str(required=True)
     x: float = zeared.Float(default=0.0)
     since: float = zeared.Float(default=0.0)  # 0 = the run began before runs were kept
     cursor: str = zeared.Str(default='')
 
 
 def to_sighting(row: Position, _request: object, meta: stored.LatestMeta) -> Sighting:
-    since = meta.run_start.replace(tzinfo=datetime.UTC).timestamp() if meta.run_start else 0.0
-    return Sighting(source=row.source, epc=row.epc, x=row.x, since=since)
+    since = meta.run_start.replace(tzinfo=dt.UTC).timestamp() if meta.run_start else 0.0
+    return Sighting(source=row.source, item=row.item, x=row.x, since=since)
 
 
 def _run_store():
     store = AsyncStore(stored.Store(':memory:', flush_secs=0))
     store.register(
-        Position, index=('source', 'epc'), time_field='observed_at', latest_key=('source', 'epc'), latest_run_gap='1h'
+        Position, index=('source', 'item'), time_field='observed_at', latest_key=('source', 'item'), latest_run_gap='1h'
     )
     # E1: seen at 1000 and again at 1500 — one run. E2: seen at 1000, then not until 9000 — a new run.
-    for epc, at in [('E1', 1000.0), ('E2', 1000.0), ('E1', 1500.0), ('E2', 9000.0)]:
-        store.record(Position, Position(source='rtls', epc=epc, x=at, observed_at=at))
+    for item, at in [('E1', 1000.0), ('E2', 1000.0), ('E1', 1500.0), ('E2', 9000.0)]:
+        store.record(Position, Position(source='site-a', item=item, x=at, observed_at=at))
     return store
 
 
@@ -1046,11 +1101,11 @@ async def test_serve_latest_with_meta_hands_the_hook_the_run_start(session):
     try:
         await store.flush()
         binding = Binding(store, session=session)
-        binding.serve_latest(Sighting, of=Position, key=('source', 'epc'), project=to_sighting, with_meta=True)
+        binding.serve_latest(Sighting, of=Position, key=('source', 'item'), project=to_sighting, with_meta=True)
         await _settle()
 
-        e1 = await zeared.aquery_one(Sighting, request=SightingRequest(source='rtls', epc='E1'), timeout=5.0)
-        e2 = await zeared.aquery_one(Sighting, request=SightingRequest(source='rtls', epc='E2'), timeout=5.0)
+        e1 = await zeared.aquery_one(Sighting, request=SightingRequest(source='site-a', item='E1'), timeout=5.0)
+        e2 = await zeared.aquery_one(Sighting, request=SightingRequest(source='site-a', item='E2'), timeout=5.0)
         assert e1 is not None
         assert e2 is not None
         assert (e1.x, e1.since) == (1500.0, 1000.0)  # newest row, run from its first sighting
@@ -1076,16 +1131,16 @@ async def test_serve_snapshot_with_meta_pairs_every_row_with_its_run(session, mo
         binding.serve_snapshot(Sighting, of=Position, filters=('source',), project=to_sighting, with_meta=True, **shape)
         await _settle()
 
-        request = SightingRequest(source='rtls', limit=1 if mode == 'paged' else 0)
+        request = SightingRequest(source='site-a', limit=1 if mode == 'paged' else 0)
         rows = await zeared.aquery(Sighting, request=request, timeout=5.0)
         if mode == 'paged':  # one entity per page: follow the cursor to the second
             assert len(rows) == 1
             assert rows[-1].cursor
             rest = await zeared.aquery(
-                Sighting, request=SightingRequest(source='rtls', limit=1, cursor=rows[-1].cursor), timeout=5.0
+                Sighting, request=SightingRequest(source='site-a', limit=1, cursor=rows[-1].cursor), timeout=5.0
             )
             rows = [*rows, *rest]
-        assert sorted((r.epc, r.since) for r in rows) == [('E1', 1000.0), ('E2', 9000.0)]
+        assert sorted((r.item, r.since) for r in rows) == [('E1', 1000.0), ('E2', 9000.0)]
     finally:
         if binding:
             binding.close()
@@ -1128,7 +1183,7 @@ class Stop(zeared.Message):
     SCHEMA = '1'
     REQUEST = StopRequest
 
-    epc: str = zeared.Str(required=True)
+    item: str = zeared.Str(required=True)
     floor: int = zeared.Int(default=0)
     observed_at: float = zeared.Float(required=True)
     cursor: str = zeared.Str(default='')
@@ -1140,9 +1195,9 @@ _STOP_UNSET = {'floor': (None,), 'tags': (None, [])}
 
 def _stop_store():
     store = AsyncStore(stored.Store(':memory:', flush_secs=0))
-    store.register(Stop, index=('epc', 'floor'), time_field='observed_at', latest_key=('epc',))
-    for epc, floor, at in [('E1', 0, 1000.0), ('E2', 1, 1001.0), ('E3', 0, 1002.0)]:
-        store.record(Stop, Stop(epc=epc, floor=floor, observed_at=at))
+    store.register(Stop, index=('item', 'floor'), time_field='observed_at', latest_key=('item',))
+    for item, floor, at in [('E1', 0, 1000.0), ('E2', 1, 1001.0), ('E3', 0, 1002.0)]:
+        store.record(Stop, Stop(item=item, floor=floor, observed_at=at))
     return store
 
 
@@ -1164,11 +1219,11 @@ async def test_a_per_field_policy_keeps_zero_for_one_field_and_open_for_the_rest
         await store.flush()
         binding = Binding(store, session=session)
         declare = binding.serve_range if serve == 'range' else binding.serve_snapshot
-        declare(Stop, filters={'floor': 'floor', 'tags': 'epc'}, since='from_ts', until='to_ts', unset=_STOP_UNSET)
+        declare(Stop, filters={'floor': 'floor', 'tags': 'item'}, since='from_ts', until='to_ts', unset=_STOP_UNSET)
         await _settle()
 
         rows = await zeared.aquery(Stop, request=request_, timeout=5.0)
-        assert sorted(r.epc for r in rows) == expected
+        assert sorted(r.item for r in rows) == expected
     finally:
         if binding:
             binding.close()
@@ -1186,7 +1241,7 @@ async def test_the_default_policy_reads_floor_zero_as_any_floor(session):
         await _settle()
 
         rows = await zeared.aquery(Stop, request=StopRequest(floor=0), timeout=5.0)
-        assert sorted(r.epc for r in rows) == ['E1', 'E2', 'E3']
+        assert sorted(r.item for r in rows) == ['E1', 'E2', 'E3']
     finally:
         if binding:
             binding.close()
@@ -1196,8 +1251,8 @@ async def test_the_default_policy_reads_floor_zero_as_any_floor(session):
 async def test_a_per_field_policy_applies_to_a_latest_key(session):
     zeared.session = session
     store = AsyncStore(stored.Store(':memory:', flush_secs=0))
-    store.register(Stop, index=('epc', 'floor'), time_field='observed_at', latest_key=('floor',))
-    store.record(Stop, Stop(epc='E1', floor=0, observed_at=1000.0))
+    store.register(Stop, index=('item', 'floor'), time_field='observed_at', latest_key=('floor',))
+    store.record(Stop, Stop(item='E1', floor=0, observed_at=1000.0))
     binding = None
     try:
         await store.flush()
@@ -1207,7 +1262,7 @@ async def test_a_per_field_policy_applies_to_a_latest_key(session):
 
         found = await zeared.aquery_one(Stop, request=StopRequest(floor=0), timeout=5.0)
         assert found is not None
-        assert found.epc == 'E1'
+        assert found.item == 'E1'
     finally:
         if binding:
             binding.close()
@@ -1223,7 +1278,7 @@ async def test_a_per_field_policy_naming_no_request_field_is_refused(session, se
     declare = {
         'range': lambda: binding.serve_range(Stop, unset={'flor': (None,)}),
         'snapshot': lambda: binding.serve_snapshot(Stop, unset={'flor': (None,)}),
-        'latest': lambda: binding.serve_latest(Stop, key=('epc',), unset={'flor': (None,)}),
+        'latest': lambda: binding.serve_latest(Stop, key=('item',), unset={'flor': (None,)}),
     }[serve]
     try:
         with pytest.raises(ConfigError, match=r"unset names \['flor'\], which StopRequest does not declare"):

@@ -1,9 +1,11 @@
 # systemd unit template for the stored chronicler daemon.
-# Production supervisor is systemd, with no HTTP health port. Install stored into
-# a uv-built venv; adjust paths/User for the host.
+# Production supervisor is systemd; health is systemd + Zenoh liveliness (a token
+# at stored/presence/{identity}) — no HTTP health port. Install stored into a
+# uv-built venv; adjust paths/User for the host.
 #
-# Type=notify: the daemon sends sd_notify(READY=1) once its session is open and
-# every stream is subscribed, and STOPPING=1 as it shuts down.
+# Type=notify: the daemon sends sd_notify(READY=1) once its session is open,
+# every stream is subscribed and its presence token is up, and STOPPING=1 as it
+# shuts down.
 #
 # `-c` is the CLI's top-level option, so it goes before the `run` subcommand.
 
@@ -18,7 +20,8 @@ ExecStart=/opt/stored/.venv/bin/stored -c /etc/stored/stored.toml run
 Restart=on-failure
 RestartSec=2
 # WatchdogSec=30            # needs periodic sd_notify(WATCHDOG=1), which the daemon doesn't send yet
-Environment=STORED_LOG_LEVEL=INFO
+# The log level is the TOML's `log_level`: with `-c`, the config comes from the
+# file alone, and STORED_* environment variables aren't read.
 # Harden as appropriate for the deployment host:
 # DynamicUser=yes
 # StateDirectory=stored

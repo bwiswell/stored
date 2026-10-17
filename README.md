@@ -35,26 +35,26 @@ sister that remembers.
 
 ## Install
 
-Each release is tagged `v<version>` on GitHub (the first is `v0.3.5`). Install one
-by its tag:
+Each release is tagged `v<version>` on GitHub (the first is `v0.3.5`; the latest is
+`v0.4.0`). Install one by its tag:
 
 ```sh
 # persist/query seared objects + the Zenoh chronicler (stdlib sqlite3 backend)
-uv add git+https://github.com/bwiswell/stored --tag v0.3.5
+uv add git+https://github.com/bwiswell/stored --tag v0.4.0
 
 # with the DuckDB backend (analytics upgrade)
-uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.3.5"
+uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.4.0"
 ```
 
 `uv add` records the tag as the dependency's source:
 
 ```toml
 [tool.uv.sources]
-stored = { git = "https://github.com/bwiswell/stored", tag = "v0.3.5" }
+stored = { git = "https://github.com/bwiswell/stored", tag = "v0.4.0" }
 ```
 
 **The tag is the pin.** uv doesn't check a version specifier such as
-`stored>=0.3,<0.4` against a git source: it takes whatever the source points at,
+`stored>=0.4,<0.5` against a git source: it takes whatever the source points at,
 and a source without a tag points at the tip of `master`. Moving to a new release
 means moving the tag.
 
@@ -64,6 +64,62 @@ chronicler moved into the base install.
 
 Requires Python ≥ 3.14. What changed in each release, and what may break on the way,
 is in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Upgrading to 0.4.0
+
+0.4.0 moves `stored` to seared 0.4.0 and zeared 0.4.1, both breaking releases, and
+fixes how rows with no event time are kept. What changes for code and deployments
+written against 0.3.x, and what to do:
+
+**1. Pins.** Move the three together: `stored` to `tag = "v0.4.0"`, `seared` to
+`tag = "v0.4.0"` and `zeared` to `tag = "v0.4.1"`. `stored` pins its siblings by tag,
+and uv refuses two different URLs for one package, so a project that names either
+needs the same tag.
+
+**2. Decoding is seared 0.4.0's.** A sample seared now refuses — a `null` in a
+required field, a fractional number into an `Int`, a `2` into a `Bool` — goes to the
+stream's `on_error` rather than being recorded. A `null` on a field with a default
+records the default, so declare a `time_field` that may be `null` as `X | None` with
+`default=None` (or `nullable=True`): with `Float(default=0.0)` it reads as 1970 and
+expires at the next sweep. A binding's requests decode the same way; see
+*The sentinel policy* in [docs/mesh.md](docs/mesh.md).
+
+**3. History reads are strict.** A row the stream's current class can't hold exactly,
+written before a lossy retype (`3.7` under an `Int`), raises `seared.ValidationError`
+from a read, and a history query answers with an error reply. Retype only to a type
+that holds every stored value.
+
+**4. Liveliness departures aren't recorded.** zeared 0.4.0 delivers them to
+`on_offline`, as an identity with no message, and the chronicler subscribes
+`on_message` only.
+
+**5. Slots zeared refuses.** A class with a `Path` slot, or a `Bytes` slot in its
+default base64 form, in a single key segment raises `zeared.TopicError` when the
+chronicler or a binding first subscribes it, so a daemon configured with one fails at
+start. Use `Bytes(encoding='hex')` or a `Str` slot, or a trailing `{name**}` slot for a
+path. A stored row whose slot value holds a `/` is skipped when history is served or
+replayed.
+
+**6. The daemon's identity and presence.** `stored run` holds a liveliness token at
+`stored/presence/{identity}`, and refuses an `identity` that isn't one key segment
+(empty, or holding `/`, `*`, `$`, `?` or `#`) before it opens anything. With access
+rules, grant it `liveliness_token` on `stored/presence/**`.
+
+**7. Rows with no event time.** On a stream with a `time_field`, a row whose field
+was unset now expires on `_issued_at`, and stays out of the latest projection, so an
+entity with only such rows has no `latest()`. The first sweep after upgrading removes
+the ones already past retention.
+
+**8. Smaller breaks.** `replay()` raises `ConfigError` for a `topic=` the class can't
+publish on, before reading anything. `stored.WriterError` is gone: nothing raised it.
+The systemd unit template no longer sets `STORED_LOG_LEVEL`, which `-c` never read;
+set `log_level` in the TOML.
+
+**9. New, not breaking.** The `[zenoh]` table takes zeared 0.4's `auto_reconnect`,
+`probe_interval`, `resync_jitter` and `resync_concurrency`
+([docs/configuration.md](docs/configuration.md)). A retained value replayed to a
+chronicler as it starts is recorded once when its publisher runs zeared 0.4.0 or
+later.
 
 ## Core: persist & query seared objects
 
@@ -85,6 +141,9 @@ for row in store.iter(Telemetry, since='-30d'):          # streamed, uncapped
     ...                                                  # a page in memory at a time
 
 current = store.query_latest(Telemetry, since='-1h')     # every entity's newest, filtered
+page, anchor = store.query_page(Telemetry, since='-1d', limit=500)          # one page…
+more, anchor = store.query_page(Telemetry, since='-1d', limit=500, after=anchor)  # …the next
+history_rows, latest_rows = store.counts(Telemetry)      # row counts, for status
 
 # filter on a key *inside* a dict field, declared with json_index=(…)
 here = store.query_latest(Location, where={'zones.department': 5})
@@ -116,9 +175,13 @@ sort key, so filters, ordering, paging and indexes work identically on both; on 
 `query` returns one list (capped, and the right shape for a request/reply). `iter`
 **streams** the same window a page at a time, for windows larger than memory: it
 flushes once when called, then walks a keyset cursor, releasing the store lock
-between pages so recording continues underneath it. Registration emits the
-secondary indexes those reads want — one on the temporal axis, one per declared
-`index=` dimension.
+between pages so recording continues underneath it. `query_page` /
+`query_latest_page` cut the same walk into request-sized pages for a caller on the far
+side of a query: each returns its rows and an anchor to pass back as `after=` (`None`
+once a short page ends the walk), which `stored.query.encode_anchor` /
+`decode_anchor` turn into an opaque cursor string. Registration emits the secondary
+indexes those reads want — one on the temporal axis, one per declared `index=`
+dimension.
 
 ## Async services: `stored.mesh.AsyncStore`
 
@@ -129,10 +192,10 @@ wraps one so it doesn't have to hand-roll the thread hop:
 from stored.mesh import AsyncStore
 
 store = AsyncStore(stored.Store('history.db', flush_rows=5000))
-store.register(Location, retention=timedelta(days=3), latest_key=('source', 'epc'))
+store.register(Location, retention=timedelta(days=3), latest_key=('source', 'item'))
 
 store.record(Location, location)                  # sync — a buffered enqueue
-newest = await store.latest(Location, source='rtls', epc=epc)
+newest = await store.latest(Location, source='site-a', item=item)
 async for row in store.iter(Location, since='-7d'):   # one thread hop per page
     ...
 ```
@@ -153,15 +216,15 @@ from stored.mesh import Binding
 binding = Binding(store)
 binding.record(Alarm, store_as=Event, via=from_alarm)   # subscribe A → persist B
 binding.serve_range(Event, filters=('source', 'kind'), since='from_ts', limit='limit')
-binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),
+binding.serve_latest(LastPosition, of=Position, key=('source', 'item'),
                      project=to_last_position, missing=no_position)
 
 binding.serve_range(Event, filters=('source',), stream=True)   # reply row by row
 binding.serve_range(Event, filters=('source',), limit='limit', cursor='cursor')  # paged: the last reply of a full page carries the next cursor
 
 binding.serve_snapshot(Placed, filters={'zone': 'zones.department'})  # current state, by zone
-binding.serve_latest(LastPosition, of=Position, key=('source', 'epc'),  # one thing under several keys:
-                     project=to_last_position, expand={'epc': spellings})  # the newest of them
+binding.serve_latest(LastPosition, of=Position, key=('source', 'item'),  # one thing under several keys:
+                     project=to_last_position, expand={'item': spellings})  # the newest of them
 ```
 
 Recorded history can also go back **onto** the mesh, where ordinary subscribers
@@ -211,7 +274,10 @@ stored -c stored.toml migrate               # create/reconcile tables
 stored -c stored.toml prune                 # force a TTL sweep
 ```
 
-See `systemd/stored.service` for the unit template.
+See `systemd/stored.service` for the unit template. Health is systemd supervision
+plus a Zenoh liveliness token the daemon holds at `stored/presence/{identity}`
+(`stored.zenoh.ChroniclerPresence`), so a watcher sees it come and go; with access
+rules, grant it `liveliness_token` there. See `docs/chronicler.md`.
 
 ## Documentation
 
@@ -219,8 +285,10 @@ See `systemd/stored.service` for the unit template.
   streaming paths, timestamps, concurrency.
 - [docs/storage-model.md](docs/storage-model.md) — row shape, type map, dedup,
   indexes, TTL, archival roadmap.
-- [docs/mesh.md](docs/mesh.md) — the `stored.mesh` layer: `AsyncStore` + `Binding`.
-- [docs/chronicler.md](docs/chronicler.md) — the `stored.zenoh` layer + daemon.
+- [docs/mesh.md](docs/mesh.md) — the `stored.mesh` layer: `AsyncStore`, `Binding`
+  and `Replayer`.
+- [docs/chronicler.md](docs/chronicler.md) — the `stored.zenoh` layer, the daemon and
+  its presence.
 - [docs/configuration.md](docs/configuration.md) — `StoredConfig` / `StreamSpec`.
 
 ## Development
@@ -241,6 +309,8 @@ here passes there. A fifth refuses any commit on `master`.
 - **Work on it happens in `feat/…` and `fix/…` branches,** each a pull request
   squash-merged into the version branch. Each adds its own lines to the `unreleased`
   entry at the top of `CHANGELOG.md`.
+- **A minor release then takes a `chore/code-hygiene-and-docs` branch:** docs
+  checked against the code, pins and deferred lint swept.
 - **Once those are all in, one `chore: version bump` commit** on the version branch
   bumps the version in `pyproject.toml` and `stored/__init__.py` together (a test
   checks that they agree), refreshes the lockfile, and dates the changelog entry.

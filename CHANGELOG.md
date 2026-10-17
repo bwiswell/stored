@@ -8,6 +8,110 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.0 — 2026-10-17
+
+**On seared 0.4.0 and zeared 0.4.1, with a presence token for the daemon.** stored adopts both siblings' breaking
+releases, which change what it records and serves in the ways marked below. A chronicler records each retained value
+once, history replies and replays skip a row with no key, and a row with no event time expires and stays out of the
+projection. The README's *Upgrading to 0.4.0* lists every break with what to do.
+
+### Added
+
+- **`ReplayHandle.skipped`,** the rows a replay skipped because they had no key to publish on, beside `sent`. A
+  `progress` dict passed to `replay()` gains a `'skipped'` count too.
+- **The daemon holds a presence token.** `stored run` declares a Zenoh liveliness token at
+  `stored/presence/{identity}` once every stream is subscribed, just before `READY=1`, and withdraws it first as it
+  shuts down; a crash withdraws it too. So health is systemd supervision plus Zenoh liveliness, as the docs and the
+  systemd unit say again; 0.3.5 had taken the claim out, since no token was declared then. A watcher subscribes
+  `stored.zenoh.ChroniclerPresence` with `on_online` / `on_offline`. With access rules, grant the daemon
+  `liveliness_token` on `stored/presence/**`.
+
+### Changed
+
+- **Breaking:** a liveliness class's departures are no longer recorded. zeared 0.4.0 delivers them to `on_offline`,
+  as a key's identity with no message, where it delivered them to `on_message` as a typed will, and the chronicler
+  subscribes `on_message` only. stored records the messages published on the mesh, and nothing else.
+- **Breaking:** samples are decoded by seared 0.4.0's stricter rules before stored sees them, so one that 0.3.x
+  recorded can go to the stream's `on_error` instead: a `null` in a required field, a fractional number into an
+  `Int`, a `2` into a `Bool`. A `null` on a field with a default records the default, where it recorded `None`, so a
+  `time_field` declared `Float(default=0.0)` reads 1970 rather than `NULL`.
+- **Breaking:** a binding's request is decoded the same way. A `null` on a request field with a default reads as
+  that default, so a sentinel policy that lists `None` counts the field as provided; a `null` in a required request
+  field leaves the request undecoded, and the binding logs that the query carried no payload and replies with
+  nothing.
+- **Breaking:** history is read back strictly. A row the stream's current class can't hold exactly, written before a
+  field was retyped (`3.7` under an `Int`, `2` under a `Bool`), raises `seared.ValidationError` from a query, where
+  0.3.x coerced it, and a history queryable replies with that error in seared 0.4.0's `Cls.path: reason` form.
+- **Breaking:** a message class with a `Path` slot, or a `Bytes` slot in its default base64 form, in a single key
+  segment raises zeared's `TopicError` when the chronicler or a binding first subscribes it, so a daemon configured
+  with one fails at start. Either can render a `/` and split the key. Use `Bytes(encoding='hex')` or a `Str` slot,
+  or a trailing `{name**}` slot for a path.
+- **Breaking:** `stored run` refuses an `identity` that can't be one key segment (empty, or holding `/`, `*`, `$`,
+  `?` or `#`) with a `ConfigError`, before it opens anything. It names the presence key, where it had been unused; a
+  `*` would have declared a token on every identity at once.
+- **Breaking:** `replay()` checks its destination before reading anything, and a `topic=` the class can't publish on
+  (undeclared, subscribe-only, or with a slot the class doesn't declare) raises `ConfigError`, as its docstring
+  said. It raised zeared's `TopicError` at the first row, or returned 0 for an empty window.
+- **The README gains *Upgrading to 0.4.0*,** which lists each break with what to do.
+- **The docs say what the code does.** Among the corrections:
+  - the `[zenoh]` table's keys are listed, zeared 0.4's four included, with what the docs didn't say: an unknown key
+    is dropped without a word, `validate-config` doesn't check the table, and neither it nor `streams` is read from
+    the environment, so `run` needs the TOML;
+  - a stored row stops loading after a lossy retype or a new required field, where the docs called retyped fields
+    readable;
+  - a `time_field` that may arrive as `null` should be `X | None` with `default=None`, since a real default records
+    1970;
+  - a `RETAINED` class's history is served through a `Binding` with a reply class of its own, where the docs had a
+    contract for it on the roadmap, and serving the read primitives over the mesh is the `Binding`'s job, not the
+    consumer's;
+  - SQLite is the default backend in the docstrings and the archival plan, which had called DuckDB the default;
+  - the request sentinel policy under seared's null rule, and the APIs the docs left out: `cursor=`, `max_limit=`,
+    `query_page`, `counts` and the `ReplayHandle`.
+- **The systemd unit template no longer sets `STORED_LOG_LEVEL`,** which `stored -c` never read: under `-c` the
+  config comes from the TOML alone, so the level is its `log_level`.
+- **The examples and docstrings use no particular fleet's vocabulary,** and point at nothing outside the repository.
+- **The tests mirror every module,** and the ones meant for both engines run on DuckDB too, where they had run
+  SQLite twice.
+- **seared and zeared are pinned to release tags,** seared `v0.4.0` and zeared `v0.4.1`, and the declared ranges
+  rise to `seared>=0.4.0,<0.5` and `zeared>=0.4.1,<0.5`. zeared 0.4.1 is the floor because a query whose reply fails
+  ends at once there; on 0.4.0 it stayed open until the serving process next collected garbage.
+- **Dependencies:** the lockfile resolves seared 0.4.0 (was 0.3.4) and zeared 0.4.1 (was 0.3.13). The dev group's
+  `pytest` range lifts to `>=8.0,<10.0`, and the refreshed lockfile resolves pytest 9.1.1 and ruff 0.17.1, whose
+  import convention the code now follows (`import datetime as dt`). Nothing else moves.
+
+### Fixed
+
+- **A restarted chronicler records each retained value once.** A chronicler fetches the retained values already on
+  the mesh when it starts, and a managed session fetches them again when its link comes back. The replies carried no
+  timestamp, so each was given a fresh `_ts_hlc`, the primary key never matched, and every start or reconnect added
+  a duplicate row. zeared 0.4.0 replies with the value's original timestamp, so a replay is the row already stored
+  and its insert does nothing. The publisher's zeared decides it: replies from a session still on 0.3.x carry no
+  timestamp, and their duplicates continue until it upgrades.
+- **A row with no key no longer ends a history reply or a replay.** A row whose single-segment slot holds a `/`,
+  written through `Store.record` or a `via=` mapper, has no key to go out on: zeared 0.4.0 refuses it, where 0.3.x
+  published it on a key nothing matched. The chronicler's history queryable stopped at such a row with an error
+  reply, and a replay ended there, a paged replay losing the rest of the page too. Each now skips the row and
+  carries on: the history queryable and a binding's queryables pass it to their `on_error`, or log it, and a replay
+  logs the first, counts them all on `skipped`, and logs the total. A row missing a slot value is skipped the same
+  way.
+- **A row with no event time expires.** On a stream with a `time_field`, retention compares each row's event time
+  with the cutoff, and a row whose optional `time_field` was unset has none. `NULL` is older than no cutoff, so the
+  row was never pruned, from the history or the projection. It now expires on `_issued_at`, as on a stream without a
+  `time_field`; so do the rows written before a stream took its `time_field`, which 0.2.0 noted would never expire.
+  Since 0.2.0.
+- **The latest projection keeps out rows with no event time.** Such a row went in, and since `NULL` compares as
+  neither older nor newer, no later record replaced it: `latest()` went on answering with it, and it never expired.
+  It now stays out, as `iter` and paging already skip it, so an entity with only such rows has no `latest()`. One a
+  projection already holds yields to the entity's first timed record, which also starts its run. Since 0.2.0.
+- **`archive` reaches the registry.** `run`, `migrate` and `prune` registered a stream without the `archive` horizon
+  its config gave, though the docs said they register every field. Archival is still to come, so only the registry
+  records it.
+
+### Removed
+
+- **Breaking:** `stored.WriterError`. Nothing raised it: a batch the writer fails to flush is logged and dropped, so
+  the writer thread outlives it.
+
 ## 0.3.5 — 2026-10-16
 
 **Tagged releases, an in-repo changelog, sibling tag pins, and a daemon that starts and honours its config.**

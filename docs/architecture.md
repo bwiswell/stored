@@ -5,15 +5,15 @@
 ```text
 stored.mesh   (the contract-shaped surface; AsyncStore needs no transport)
    AsyncStore: await query/latest/iter · sync register/record
-   Binding:    record(store_as/via) · serve_range(REQUEST) · serve_latest(project)
+   Binding:    record(store_as/via) · serve_range / serve_snapshot / serve_latest(REQUEST)
    Replayer:   recorded history → the mesh, on a declared replay scope
 ──────────────────────────────────────────────────────────────────
 stored.zenoh  (zeared — a core dependency; Chronicler also re-exported lazily as stored.Chronicler)
    Chronicler: on_message → record      |  on_query → serve history
-   session (timestamped) · daemon · CLI
+   session (timestamped) · daemon (+ ChroniclerPresence) · CLI
 ──────────────────────────────────────────────────────────────────
 stored  (core: seared + stdlib sqlite3)
-   Store · StreamRegistry · schema · row · Writer · query · Reaper · streams · dialect
+   Store · StreamRegistry · schema · row · Writer · query · latest · Reaper · streams · dialect
 ──────────────────────────────────────────────────────────────────
 StorageBackend
    SQLiteBackend (default)  ·  DuckDBBackend (stored[duckdb])  ·  [ Postgres — later ]
@@ -76,7 +76,11 @@ Cls.on_message(record, ...)          [zeared subscriber, 2-arg callback]
   the `Writer` flushes on a row-count threshold, on a periodic interval, and on
   close.
 - The `(_key_expr, _ts_hlc)` primary key makes redelivery an **idempotent**
-  no-op (reconnect replays, at-least-once quirks).
+  no-op: a sample delivered twice carries its HLC timestamp twice. That covers a
+  retained value replayed to a chronicler as it starts, or after a reconnect, when
+  its publisher runs zeared 0.4.0 or later, whose retained replies carry the value's
+  original timestamp. A reply from an older publisher carries none, gets a fresh
+  `_ts_hlc` (below), and is recorded as a new row.
 
 ## Query path
 
@@ -84,7 +88,7 @@ Cls.on_message(record, ...)          [zeared subscriber, 2-arg callback]
 Cls.query(id=…, params={from,to,limit})   [zeared getter]
    → stored queryable handler
    → Store.query (flush, then plan+select)
-   → ctx.reply(inst) per row                — streamed, properly-typed instances
+   → rows returned; zeared replies per row  — streamed, properly-typed instances
 ```
 
 `Store.query` **flushes the writer first**, so reads always see prior writes
@@ -115,8 +119,8 @@ along.
 `zeared` forbids `on_query` on a `RETAINED` class (retention already owns a
 queryable on that topic). So the transparent query path serves **non-RETAINED**
 classes — which telemetry streams typically are. RETAINED classes are recorded
-but not served transparently (a generic `HistoryQuery` contract for them is on
-the roadmap).
+but not served transparently: a `stored.mesh.Binding` serves their history under a
+reply class of its own, `serve_range(Reply, of=RetainedCls, project=…)`.
 
 ## Time
 

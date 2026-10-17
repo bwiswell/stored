@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from . import schema
 
 if TYPE_CHECKING:
-    import datetime
+    import datetime as dt
     from collections.abc import Sequence
 
     from .dialect import Dialect
@@ -40,7 +40,7 @@ class LatestMeta:
             stream keeps no run, or the run began before the projection was counting.
     """
 
-    run_start: datetime.datetime | None = None
+    run_start: dt.datetime | None = None
 
 
 def meta_of(columns: dict[str, Any], *, keeps_runs: bool = True) -> LatestMeta:
@@ -72,6 +72,12 @@ def upsert_sql(
     record — which may extend the run — so each column takes its new value only when the
     record is newer, and the run start is computed beside them.
 
+    Every incoming record has a ``compare_column`` value: the writer keeps a row without
+    one out of the projection, since it has no place on the axis. A stored row without one
+    (kept before 0.4.0) counts as older than any record, so the first timed record replaces
+    it and starts a run. Before, ``NULL`` compared as neither older nor newer, so it was
+    never replaced.
+
     Args:
         table: The latest-projection table.
         cols: The row's columns, in parameter order (the history row's columns).
@@ -91,18 +97,19 @@ def upsert_sql(
     conflict = ', '.join(f'"{col}"' for col in key_columns)
     head = f'INSERT INTO {t} ({col_list}) VALUES ({placeholders}) ON CONFLICT ({conflict}) DO UPDATE SET '  # noqa: S608 (quoted identifiers)
     updated = [col for col in cols if col not in key_columns]
+    newer = f'(excluded.{cmp} >= {t}.{cmp} OR {t}.{cmp} IS NULL)'
     if run_gap_s is None:
         assignments = ', '.join(f'"{col}" = excluded."{col}"' for col in updated)
-        return f'{head}{assignments} WHERE excluded.{cmp} >= {t}.{cmp}'
+        return f'{head}{assignments} WHERE {newer}'
 
-    newer = f'excluded.{cmp} >= {t}.{cmp}'
     run = f'"{schema.RUN_START}"'
     gap = float(run_gap_s)
     silence = dialect.seconds_between(f'excluded.{cmp}', f'{t}.{cmp}')
     reach = dialect.seconds_between(f'{t}.{run}', f'excluded.{cmp}')
     run_start = (
         f'{run} = CASE '
-        f'WHEN {newer} THEN (CASE WHEN {silence} > {gap!r} THEN excluded.{cmp} ELSE {t}.{run} END) '
+        f'WHEN {newer} THEN (CASE WHEN {t}.{cmp} IS NULL OR {silence} > {gap!r} '
+        f'THEN excluded.{cmp} ELSE {t}.{run} END) '
         f'WHEN {t}.{run} IS NOT NULL AND excluded.{cmp} < {t}.{run} AND {reach} <= {gap!r} THEN excluded.{cmp} '
         f'ELSE {t}.{run} END'
     )

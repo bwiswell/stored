@@ -31,7 +31,7 @@ class Stream:
             and range queries key off it (via ``_event_at``) instead of the mesh
             ``_issued_at``. ``None`` keeps the default (mesh delivery time).
         latest_key: Field names forming the **logical entity key** of a latest-per-key
-            projection (e.g. ``('source', 'epc')``). Empty means no projection.
+            projection (e.g. ``('source', 'item')``). Empty means no projection.
         latest_retention: Retention horizon for the latest projection (usually longer
             than ``retention``), canonicalized as ``retention`` is, or ``None`` to
             keep forever.

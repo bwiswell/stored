@@ -24,7 +24,6 @@ from .errors import (
     RegistrationError,
     SchemaError,
     StoredError,
-    WriterError,
 )
 from .latest import LatestMeta
 from .store import Store
@@ -32,7 +31,7 @@ from .store import Store
 if TYPE_CHECKING:
     from .zenoh import Chronicler
 
-__version__ = '0.3.5'
+__version__ = '0.4.0'
 
 __all__ = [
     'BackendError',
@@ -46,7 +45,6 @@ __all__ = [
     'StoredConfig',
     'StoredError',
     'StreamSpec',
-    'WriterError',
     '__version__',
 ]
 

@@ -2,8 +2,9 @@
 
 A ``@s.seared`` dataclass is the single source of truth, populated from the
 environment (12-factor) with an optional TOML file for local/dev convenience
-(``StoredConfig.from_toml`` is auto-attached by seared). No ``pydantic`` — the
-serializer is the config layer, per the workspace convention.
+(``StoredConfig.from_toml`` is auto-attached by seared). No ``pydantic``: seared
+is already the serializer, so it is the config layer too, and no second
+validation stack lands on every consumer.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ class LatestSpec(s.Seared):
     """A stream's latest-per-key projection (durable last-known state).
 
     Attributes:
-        key: Field names forming the logical-entity key (e.g. ``['source', 'epc']``).
+        key: Field names forming the logical-entity key (e.g. ``['source', 'item']``).
         retention: Retention horizon for the projection (usually longer than the
             stream's history ``retention``); ``None`` keeps it forever.
     """

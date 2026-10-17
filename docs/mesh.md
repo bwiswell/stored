@@ -2,13 +2,15 @@
 
 `stored.zenoh` is named for the *transport*: a session, the `Chronicler`, the
 daemon, a selector-param query handler. `stored.mesh` is the layer above it — the
-shapes a **service** binds. Two inhabitants today:
+shapes a **service** binds. Three inhabitants:
 
 - **`AsyncStore`** — an awaitable view of a blocking `Store`, for services on an
   event loop. Needs no transport at all.
 - **`Binding`** — subscribers and queryables declared against typed contracts:
   record, time-range history, last-known for one entity, and current state for a
   population.
+- **`Replayer`** — recorded history published back onto the mesh, so ordinary
+  subscribers receive it.
 
 Everything here speaks *zeared* vocabulary — a message class, its `REQUEST`
 payload, a queryable, a projection function — and nothing else. No contract,
@@ -21,10 +23,10 @@ lets one binding serve any `@zeared` class.
 from stored.mesh import AsyncStore
 
 store = AsyncStore(stored.Store('history.db', flush_rows=5000))
-store.register(Position, time_field='observed_at', latest_key=('source', 'epc'))
+store.register(Position, time_field='observed_at', latest_key=('source', 'item'))
 
 store.record(Position, position)                       # sync — a buffered enqueue
-newest = await store.latest(Position, source='rtls', epc=epc)
+newest = await store.latest(Position, source='site-a', item=item)
 async for row in store.iter(Position, since='-7d'):    # one thread hop per page
     ...
 ```
@@ -51,7 +53,7 @@ binding.serve_range(                        # typed time-range history
     since='from_ts', until='to_ts', limit='limit',
 )
 binding.serve_latest(                       # last-known for one entity
-    LastPosition, of=Position, key=('source', 'epc'),
+    LastPosition, of=Position, key=('source', 'item'),
     project=to_last_position, missing=no_position,
 )
 ...
@@ -61,6 +63,11 @@ binding.close()                             # releases every handle
 Handlers are `async def`, so they await the store on a worker thread and never
 block the loop. Declare the binding from inside a running loop — zeared schedules
 an async handler on the loop live at declaration time.
+
+A queryable's rows go out as one reply each. A row with no key to reply on, because
+a single-segment slot holds a `/` (which zeared refuses, since it would split the
+key), is skipped: zeared logs it, or passes it to the method's `on_error`, and the
+rest of the answer still goes out.
 
 ### `record(cls, store_as=…, via=…)`
 
@@ -74,9 +81,26 @@ redelivery of a source message still dedups on the stored primary key.
 ### `serve_range(cls, …)`
 
 Reads the request's fields by name: `filters` become equality filters on indexed
-dimensions, `since`/`until` the window, `limit` the cap. `cls` is both the stored
-class and the reply class — a stream is queried by, and answers with, the class it
-is stored as.
+dimensions, `since`/`until` the window, `limit` the cap. `cls` is the reply class,
+and the stored class too unless `of=` names another, when `project=` turns each row
+into a reply (as for `serve_snapshot`, below).
+
+### Limits and pages
+
+- **`default_limit`** fills in a request that names no `limit`; **`max_limit`** is
+  the service's ceiling, applied whatever the request asks. Set `max_limit` wherever
+  a caller collects every reply into one frame: a request for a hundred thousand
+  rows shouldn't get them. Without either, the planner's defaults apply: 1,000 rows
+  when no limit is given, and never more than 100,000.
+- **`cursor=`** names a field on the request *and* the reply for paging. The
+  request's value (empty for the first page) resumes the walk after the row it
+  names. The last reply of a full page carries the next page's cursor, and every
+  other reply an empty one: a multi-reply answer has no envelope, so its last row
+  carries it. It needs a collected answer (`stream=False`).
+
+```python
+binding.serve_range(Event, filters=('source',), limit='limit', cursor='cursor', max_limit=5000)
+```
 
 ### Streaming a range
 
@@ -172,16 +196,16 @@ maps a filter (or key) field to `fn(request)`, and what the function returns is 
 field matches — a single value, or a collection to match **any** of:
 
 ```python
-# A tag whose EPC is rewritten at a sale is one item under two spellings.
-binding.serve_range(AlertRecord, filters=('source', 'epc'), expand={'epc': spellings})
-binding.serve_latest(LastKnownLocation, of=Location, key=('source', 'epc'),
-                     project=to_last_known, expand={'epc': spellings})
+# An item relabelled partway through its life is one thing under two ids.
+binding.serve_range(AlertRecord, filters=('source', 'item'), expand={'item': spellings})
+binding.serve_latest(LastPosition, of=Position, key=('source', 'item'),
+                     project=to_last_position, expand={'item': spellings})
 ```
 
 - A collection filters as `IN (…)`, and an **empty** one matches nothing — "any of none"
   is never read as "no filter".
 - `serve_latest` with a collection answers the **newest** row across every key it names,
-  so either spelling of the tag answers with where the item was last seen.
+  so either id answers with where the item was last seen.
 - The expander runs only when the field is present in the request. An absent field stays
   unfiltered, exactly as without `expand`.
 - An `expand` entry for a field that is not one of the declaration's filters (or key
@@ -235,6 +259,11 @@ handle = replayer.start(Reading, since='-1h', speed=1.0)    # real time, in the 
 handle.stop();  sent = await handle.wait()
 ```
 
+A `ReplayHandle` reports `sent` and `skipped` as the replay runs, `done` once it
+has finished, been stopped or failed, and holds the asyncio `task` it runs on.
+`stop()` ends it after the row in flight, and `await wait()` returns the rows
+published.
+
 ### Where a replay lands
 
 zeared publishes on **declared** templates only, so a replayable class declares its
@@ -249,7 +278,9 @@ class Reading(zeared.Message):
 `replay()` defaults to that sole `EXTRA_TOPICS` entry; pass `topic=` to choose among
 several, or `topic=cls.TOPIC` to republish onto the live topic (rarely what you
 want — recorders then cannot tell replay from live). A class with no declared scope
-and no explicit `topic=` is a `ConfigError` rather than a silent republish.
+and no explicit `topic=` is a `ConfigError` rather than a silent republish, and so
+is a `topic=` the class can't publish on (undeclared, or subscribe-only), found
+before anything is read.
 
 That one declaration carries the whole isolation story, because provenance has
 nowhere else to ride: `ZenohMeta.origin` is derived from the local delivery path and
@@ -280,6 +311,15 @@ A subscription covers every template a class declares, so:
 A replay always publishes with `retain=False`, so replaying a `RETAINED` class can
 never clobber the live retained value with a historical one.
 
+### Rows with no key
+
+A row whose single-segment slot holds a `/` has no key to go out on: zeared refuses
+it, since it would split the key. Such a row can only have been written by
+`Store.record` or a `via=` mapper, never captured from a key. The replay skips it,
+logs the first, and goes on; `handle.skipped` (or `progress['skipped']`) counts
+them all, and the replay logs the total when it ends. `replay()` returns the rows
+it sent.
+
 ## The sentinel policy
 
 Request payloads commonly encode "not provided" as an empty string or a zero
@@ -287,12 +327,18 @@ rather than `None` — a wire format without optionals. `UNSET_FALSY`
 (`('', 0, 0.0, None)`) is that convention, and it is the default:
 
 ```python
-HistoryRequest(source='rtls')        # filters on source, ignores the empty kind
+HistoryRequest(source='site-a')      # filters on source, ignores the empty kind
 HistoryRequest()                     # filters on nothing: the whole history
 ```
 
 Pass `unset=(None,)` for a strict convention where `''` is a real value to match,
 or any tuple a given fleet treats as absent.
+
+A request field holds `None` only when `None` is its default or it is
+`nullable=True`. Since seared 0.4.0, a wire `null` on any other field reads as the
+field's default, so a policy that lists only `None` counts it as provided; and a
+`null` in a required field leaves the request undecoded, which the binding logs
+("query carried no … payload") and answers with nothing.
 
 When a request's fields disagree, name the exceptions per field. A mapping names
 only the fields that differ; every other field keeps `UNSET_FALSY`:
@@ -301,7 +347,7 @@ only the fields that differ; every other field keeps `UNSET_FALSY`:
 binding.serve_snapshot(
     LatestPosition,
     of=Position,
-    filters={'floor_id': 'floor_id', 'tags': 'epc'},
+    filters={'floor_id': 'floor_id', 'tags': 'item'},
     since='from_ts',                  # 0 = open: the default policy
     unset={
         'floor_id': (None,),          # None = any floor; 0 is a floor like any other
