@@ -47,7 +47,8 @@ The Zenoh chronicler ships with the base install (`zeared` is a core dependency)
 The `stored[zenoh]` extra was retired in 0.3.0 — it had been an empty alias since the
 chronicler moved into the base install.
 
-Requires Python ≥ 3.14.
+Requires Python ≥ 3.14. What changed in each release, and what may break on the way,
+is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Core: persist & query seared objects
 
