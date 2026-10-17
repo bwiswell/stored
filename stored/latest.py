@@ -43,9 +43,17 @@ class LatestMeta:
     run_start: datetime.datetime | None = None
 
 
-def meta_of(columns: dict[str, Any]) -> LatestMeta:
-    """The :class:`LatestMeta` carried by one latest-projection row (``SELECT *`` columns)."""
-    return LatestMeta(run_start=columns.get(schema.RUN_START))
+def meta_of(columns: dict[str, Any], *, keeps_runs: bool = True) -> LatestMeta:
+    """The :class:`LatestMeta` carried by one latest-projection row (``SELECT *`` columns).
+
+    Args:
+        columns: The row, as ``SELECT *`` columns.
+        keeps_runs: Whether the stream is registered with a ``latest_run_gap``. When
+            it isn't, there is no run start, whatever the row holds: the column
+            outlives a gap dropped from the registration, and the upsert stops
+            updating it.
+    """
+    return LatestMeta(run_start=columns.get(schema.RUN_START) if keeps_runs else None)
 
 
 def upsert_sql(
