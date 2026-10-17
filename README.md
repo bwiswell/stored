@@ -274,6 +274,10 @@ stored -c stored.toml migrate               # create/reconcile tables
 stored -c stored.toml prune                 # force a TTL sweep
 ```
 
+The session's connection is the config's `[zenoh]` table, or, when it has none,
+zeared's `ZEARED_SESSION_*` variables, so the daemon can run from the environment
+alone (see `docs/configuration.md`).
+
 See `systemd/stored.service` for the unit template. Health is systemd supervision
 plus a Zenoh liveliness token the daemon holds at `stored/presence/{identity}`
 (`stored.zenoh.ChroniclerPresence`), so a watcher sees it come and go; with access
