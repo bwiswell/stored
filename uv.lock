@@ -248,8 +248,8 @@ wheels = [
 
 [[package]]
 name = "seared"
-version = "0.3.4"
-source = { git = "https://github.com/bwiswell/seared?tag=v0.3.4#886be3809e6ef6f7fbfc1b0c093116449afaf504" }
+version = "0.4.0"
+source = { git = "https://github.com/bwiswell/seared?tag=v0.4.0#c98f7d449a41a2fb84dc4a940dcf67fa3f4e5fdd" }
 
 [[package]]
 name = "stored"
@@ -278,8 +278,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.1" },
-    { name = "seared", git = "https://github.com/bwiswell/seared?tag=v0.3.4" },
-    { name = "zeared", git = "https://github.com/bwiswell/zeared?tag=v0.3.13" },
+    { name = "seared", git = "https://github.com/bwiswell/seared?tag=v0.4.0" },
+    { name = "zeared", git = "https://github.com/bwiswell/zeared?tag=v0.4.0" },
 ]
 provides-extras = ["duckdb"]
 
@@ -365,8 +365,8 @@ wheels = [
 
 [[package]]
 name = "zeared"
-version = "0.3.13"
-source = { git = "https://github.com/bwiswell/zeared?tag=v0.3.13#b990b7d19eed8a77b7b900935dc7b60ff76a793a" }
+version = "0.4.0"
+source = { git = "https://github.com/bwiswell/zeared?tag=v0.4.0#ec1eb841da89e36c14b627b97ae86a76a8333057" }
 dependencies = [
     { name = "eclipse-zenoh" },
     { name = "msgpack" },
