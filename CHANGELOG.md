@@ -10,15 +10,28 @@ lines as it lands, and the entry is dated when that version is released.
 
 ## 0.3.5 — unreleased
 
-**The changelog ships with the repository, and seared and zeared are pinned to release tags.**
+**Tagged releases, the changelog in the repository, and seared and zeared pinned to release tags.**
 
 ### Added
 
 - **`CHANGELOG.md`**, this file: every release from 0.1.0 on, newest first. It is kept in the repository and grows
   with each change as it merges. The entries before 0.3.5 were written afterwards, from each release's changes.
+- **Releases are tagged.** A `Release Tag` workflow (`.github/workflows/release-tag.yml`) runs when a version merges
+  to `master`. It checks that `pyproject.toml` and `stored/__init__.py` stamp the same version, then tags the merge
+  `v<version>` and publishes a GitHub release; a version already released is skipped. 0.3.5 is the first tagged
+  release, and earlier ones stay untagged.
+- **A test that the two version stamps agree,** read from `pyproject.toml` rather than spelled out, so a mismatched
+  bump fails before it reaches `master`. It replaces a test that held the version as a literal.
+- **A `no-commit-to-branch` hook** refuses a commit on `master`, which now moves only by merge. It is prek's
+  built-in copy, so it fetches nothing.
 
 ### Changed
 
+- **The README installs a release by its tag,** `uv add git+https://github.com/bwiswell/stored --tag v0.3.5`, and
+  shows the `[tool.uv.sources]` line that records. It says why: uv doesn't check a version specifier against a git
+  source, so a source without a tag follows the tip of `master`.
+- **README Development describes the release process:** `feat/` and `fix/` branches merge into a `version/` branch,
+  a `chore: version bump` commit closes it, and the version branch merges into `master`, where it is tagged.
 - **seared and zeared are pinned to release tags,** `v0.3.4` and `v0.3.13`, and the declared ranges rise to the
   versions tested against: `seared>=0.3.4,<0.4` and `zeared>=0.3.13,<0.4`. uv checks no range against a git source,
   so the tags are what pin them. Relocking works again: stored's seared source carried no tag, zeared's pins seared
