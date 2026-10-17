@@ -3,7 +3,9 @@
 # format, clean dependency hygiene, and a clean `ty` check. Order follows
 # ruff's own guidance: lint first, formatter last so it tidies anything the
 # lint pass touched. `deptry` and `ty` are whole-project checks, so they take
-# no filenames.
+# no filenames. `no-commit-to-branch` refuses a commit on `master`, which moves
+# only by merging a `version/` branch (see README Development); it is prek's
+# built-in copy, so nothing is fetched to run it.
 repos:
   - repo: local
     hooks:
@@ -29,3 +31,6 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
+  - repo: builtin
+    hooks:
+      - id: no-commit-to-branch  # master moves only by merge
