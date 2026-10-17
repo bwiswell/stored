@@ -333,6 +333,28 @@ def test_iter_skips_rows_with_no_event_time(tmp_path):
         store.close()
 
 
+@pytest.mark.parametrize('backend', ['sqlite', 'duckdb'])
+def test_a_row_with_no_event_time_stays_out_of_the_projection(tmp_path, backend):
+    # It has no place on the axis the projection is newest on. Until 0.4.0 it went in,
+    # and then no timed record could replace it: NULL compared as neither older nor newer.
+    if backend == 'duckdb':
+        pytest.importorskip('duckdb')
+    store = Store(str(tmp_path / f'c.{backend}'), backend=backend, flush_secs=0)
+    try:
+        store.register(Nullable, index=('id',), time_field='observed_at', latest_key=('id',))
+        store.record(Nullable, Nullable(id=1))
+        store.flush()
+        assert store.latest(Nullable, id=1) is None
+
+        store.record(Nullable, Nullable(id=1, observed_at=1000.0))
+        store.record(Nullable, Nullable(id=1))  # nor does a later one displace a timed row
+        store.flush()
+        assert store.latest(Nullable, id=1) == Nullable(id=1, observed_at=1000.0)
+        assert store.counts(Nullable) == (3, 1)  # history keeps all three
+    finally:
+        store.close()
+
+
 def test_iter_rejects_bad_paging_arguments(tmp_path):
     store = _filled(tmp_path, 1)
     try:

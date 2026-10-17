@@ -30,6 +30,7 @@ from ..dialect import DEFAULT_DIALECT, Dialect
 from ..errors import BackendError
 from ..latest import upsert_params, upsert_sql
 from ..log import get_logger
+from ..ttl import delete_before_sql
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -260,14 +261,16 @@ class SQLiteBackend:
         table: str,
         column: str,
         cutoff: datetime.datetime,
+        *,
+        fallback: str | None = None,
     ) -> int:
-        """Delete rows of ``table`` whose ``column`` is older than ``cutoff``.
+        """Delete rows of ``table`` whose ``column`` (or ``fallback``, where it is ``NULL``) is older than ``cutoff``.
 
         Returns the number of rows removed (``cursor.rowcount``).
         """
-        sql = f'DELETE FROM "{table}" WHERE "{column}" < ?'  # noqa: S608 (quoted identifiers)
+        sql, params = delete_before_sql(table, column, cutoff, fallback)
         try:
-            cursor = self._conn.execute(sql, [cutoff])
+            cursor = self._conn.execute(sql, params)
             self._conn.commit()
         except sqlite3.Error as exc:
             msg = f'delete_before({table!r}) failed: {exc}'

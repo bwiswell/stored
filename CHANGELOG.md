@@ -72,6 +72,15 @@ starts.
   carries on: the history queryable and a binding's queryables pass it to their `on_error`, or log it, and a replay
   logs the first, counts them all on `skipped`, and logs the total. A row missing a slot value is skipped the same
   way.
+- **A row with no event time expires.** On a stream with a `time_field`, retention compares each row's event time
+  with the cutoff, and a row whose optional `time_field` was unset has none. `NULL` is older than no cutoff, so the
+  row was never pruned, from the history or the projection. It now expires on `_issued_at`, as on a stream without a
+  `time_field`; so do the rows written before a stream took its `time_field`, which 0.2.0 noted would never expire.
+  Since 0.2.0.
+- **The latest projection keeps out rows with no event time.** Such a row went in, and since `NULL` compares as
+  neither older nor newer, no later record replaced it: `latest()` went on answering with it, and it never expired.
+  It now stays out, as `iter` and paging already skip it, so an entity with only such rows has no `latest()`. One a
+  projection already holds yields to the entity's first timed record, which also starts its run. Since 0.2.0.
 
 ## 0.3.5 — 2026-10-16
 

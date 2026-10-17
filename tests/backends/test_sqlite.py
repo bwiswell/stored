@@ -1,6 +1,8 @@
 import datetime
 import decimal
 
+import pytest
+
 from stored.backends.sqlite_ import SQLiteBackend
 
 
@@ -268,5 +270,53 @@ def test_ensure_json_index_appends_the_sort_key():
         (row,) = backend.select("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'ix'")
         assert 'json_extract' in row['sql']
         assert '"_issued_at", "_ts_hlc", "_key_expr"' in row['sql']
+    finally:
+        backend.close()
+
+
+# -- rows with no event time ---------------------------------------------------
+
+
+def test_delete_before_falls_back_where_the_column_is_null():
+    backend = SQLiteBackend(':memory:')
+    try:
+        backend.ensure_table('t', {'id': 'BIGINT', '_event_at': 'TIMESTAMP', '_issued_at': 'TIMESTAMP'}, ('id',))
+        old, new = datetime.datetime(2026, 1, 1), datetime.datetime(2026, 3, 1)
+        backend.append_batch(
+            't',
+            [
+                {'id': 1, '_event_at': old, '_issued_at': new},  # old by event time
+                {'id': 2, '_event_at': None, '_issued_at': old},  # no event time, issued long ago
+                {'id': 3, '_event_at': None, '_issued_at': new},  # no event time, issued recently
+                {'id': 4, '_event_at': new, '_issued_at': old},  # recent by event time
+            ],
+        )
+        cutoff = datetime.datetime(2026, 2, 1)
+        assert backend.delete_before('t', '_event_at', cutoff) == 1  # NULL is older than no cutoff
+        assert backend.delete_before('t', '_event_at', cutoff, fallback='_issued_at') == 1
+        assert [row['id'] for row in backend.select('SELECT id FROM "t" ORDER BY id')] == [3, 4]
+    finally:
+        backend.close()
+
+
+@pytest.mark.parametrize('run_gap_s', [None, 3600.0], ids=['newest', 'with-runs'])
+def test_upsert_latest_replaces_a_stored_row_with_no_compare_value(run_gap_s):
+    # A projection kept rows with no event time before 0.4.0, and NULL compared as
+    # neither older nor newer, so no record ever replaced one.
+    backend = SQLiteBackend(':memory:')
+    try:
+        cols = {'id': 'BIGINT', 'x': 'DOUBLE', '_event_at': 'TIMESTAMP'}
+        if run_gap_s is not None:
+            cols['_run_start'] = 'TIMESTAMP'
+        backend.ensure_table('latest_t', cols, ('id',))
+        backend.append_batch('latest_t', [{'id': 1, 'x': 1.0, '_event_at': None}])
+        at = datetime.datetime(2026, 3, 1)
+        row = {'id': 1, 'x': 2.0, '_event_at': at}
+        backend.upsert_latest('latest_t', [row], ('id',), '_event_at', run_gap_s=run_gap_s)
+
+        (kept,) = backend.select('SELECT * FROM "latest_t"')
+        assert (kept['x'], kept['_event_at']) == (2.0, at)
+        if run_gap_s is not None:
+            assert kept['_run_start'] == at  # the timed record starts a run
     finally:
         backend.close()
