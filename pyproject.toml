@@ -19,6 +19,10 @@ dependencies = [
     "zeared>=0.3.13,<0.4",
 ]
 
+[project.scripts]
+# The `stored` command the README and docs use; `python -m stored` is the same CLI.
+stored = "stored.cli:main"
+
 [project.optional-dependencies]
 # ``stored[zenoh]`` is gone as of 0.3.0. The Zenoh chronicler ships with the base
 # install (``zeared`` is a core dependency), and the empty alias that kept old install

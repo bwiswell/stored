@@ -65,6 +65,7 @@ stored -c stored.toml prune             # force a TTL sweep
 
 ## systemd
 
-Production is a systemd unit (`systemd/stored.service`, `Type=notify`); health
-is systemd supervision + Zenoh liveliness — **no HTTP health port**. Logs go to
-stdout → journald. Containers are dev/CI only.
+Production is a systemd unit (`systemd/stored.service`, `Type=notify`), which
+runs `stored -c /etc/stored/stored.toml run`. The daemon signals readiness with
+`sd_notify(READY=1)` and is supervised by systemd — **no HTTP health port**. Logs
+go to stdout → journald. Containers are dev/CI only.
