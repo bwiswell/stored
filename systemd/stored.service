@@ -23,7 +23,8 @@ Restart=on-failure
 RestartSec=2
 WatchdogSec=30
 # The log level is the TOML's `log_level`: with `-c`, the config comes from the
-# file alone, and STORED_* environment variables aren't read.
+# file alone, and STORED_* environment variables aren't read. ZEARED_SESSION_*
+# ones are, but only when the file has no [zenoh] table.
 # Harden as appropriate for the deployment host:
 # DynamicUser=yes
 # StateDirectory=stored

@@ -36,13 +36,18 @@ config layer.
 Scalar fields are read as `STORED_<FIELD>` (e.g. `STORED_IDENTITY`,
 `STORED_DB_PATH`, `STORED_PRUNE_INTERVAL`). The `streams` list is **not**
 env-mapped — supply it via TOML (nested-list env nesting is out of scope) — and
-nor is the `zenoh` table. So `run` needs the TOML: an environment-only config has
-no `mode` for the session. `validate-config`, `migrate` and `prune` open no
-session and run without one.
+nor is the `zenoh` table. zeared's own variables stand in for it: with no
+`[zenoh]` table, the session comes from `ZEARED_SESSION_MODE`,
+`ZEARED_SESSION_ROUTER` and the rest (zeared's `SessionConfig.from_env`; 0.4.1),
+so an environment-only config can `run`. With neither, `run` stops with a
+`ConfigError` saying where to set a `mode`. `validate-config`, `migrate` and
+`prune` open no session and run without one.
 
 ```sh
 export STORED_IDENTITY=chronicler-1
 export STORED_DB_PATH=/var/lib/stored/chronicle.db
+export ZEARED_SESSION_MODE=client
+export ZEARED_SESSION_ROUTER=tcp/router:7447
 ```
 
 ## From TOML
@@ -73,11 +78,16 @@ time_field = "observed_at"   # prune/range by domain event time, not mesh delive
 
 Load precedence: `stored -c <file>` reads the TOML; otherwise config comes from
 the environment. The two don't layer: with `-c`, no `STORED_*` variable is read.
+The session's connection follows the same rule on its own: a `[zenoh]` table, when
+there is one, is used whole, and `ZEARED_SESSION_*` is read only when there isn't,
+with `-c` or without.
 
 ## The `[zenoh]` table
 
 The table is loaded as a `zeared.SessionConfig` (`SessionConfig.load`), and the
-session opened with `zeared.open`, timestamping on. Its keys:
+session opened with `zeared.open`, timestamping on. With no table, each key but
+`zenoh_overrides` is read from `ZEARED_SESSION_<KEY>` instead (`connect` and
+`listen` as comma-separated lists). Its keys:
 
 | Key                  | Default    | Notes |
 |----------------------|------------|-------|

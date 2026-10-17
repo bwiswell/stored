@@ -25,6 +25,10 @@ lines as it lands, and the entry is dated when that version is released.
   `recording N stream(s) as stored/presence/{identity}`. On a `ManagedSession` (`auto_reconnect` in `[zenoh]`) a
   lost link turns it to `mesh link lost; reconnecting`, with a warning in the log, until the link returns. The
   watchdog keeps pinging meanwhile: the session recovers by itself, and a restart would undo that.
+- **The session from the environment.** With no `[zenoh]` table, the daemon's session comes from zeared's
+  `ZEARED_SESSION_*` variables (`SessionConfig.from_env`), so an environment-only config can `run`, where it had no
+  `mode`. A table, when there is one, is still used whole. With neither, `run` raises a `ConfigError` saying where
+  to set a `mode`, as it does for a table without one. `stored.zenoh.session.session_config` makes the choice.
 
 ## 0.4.0 — 2026-10-17
 
