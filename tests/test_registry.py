@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 
 import pytest
 import seared as s
@@ -38,7 +38,7 @@ def test_add_and_get():
 
 def test_add_canonicalizes_horizon_units():
     reg = StreamRegistry()
-    stream = reg.add(Msg, retention=datetime.timedelta(days=7), latest_key=('id',), latest_retention=86400)
+    stream = reg.add(Msg, retention=dt.timedelta(days=7), latest_key=('id',), latest_retention=86400)
     assert stream.retention == '604800s'
     assert stream.latest_retention == '86400s'
 

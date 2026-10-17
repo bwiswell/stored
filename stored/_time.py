@@ -8,7 +8,7 @@ lexical order is chronological. All stored times are UTC by construction.
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import math
 import re
 
@@ -25,10 +25,10 @@ _DURATION_UNIT = {
 #: A retention horizon as a caller may express it: the string grammar
 #: (``'7d'``), a number of **seconds** (``3600``, ``0.5``), or a timedelta.
 #: :func:`duration_text` canonicalizes any of these to the string form.
-Duration = str | int | float | datetime.timedelta
+Duration = str | int | float | dt.timedelta
 
 
-def parse_duration(text: str) -> datetime.timedelta:
+def parse_duration(text: str) -> dt.timedelta:
     """Parse a retention horizon like ``'7d'`` / ``'48h'`` into a timedelta.
 
     Units: ``s`` seconds, ``m`` minutes, ``h`` hours, ``d`` days, ``w`` weeks.
@@ -47,7 +47,7 @@ def parse_duration(text: str) -> datetime.timedelta:
     if match is None:
         msg = f'invalid duration {text!r} (expected e.g. 7d, 48h, 30m)'
         raise ValueError(msg)
-    return datetime.timedelta(**{_DURATION_UNIT[match.group(2)]: float(match.group(1))})
+    return dt.timedelta(**{_DURATION_UNIT[match.group(2)]: float(match.group(1))})
 
 
 def duration_text(value: Duration) -> str:
@@ -72,7 +72,7 @@ def duration_text(value: Duration) -> str:
     if isinstance(value, str):
         parse_duration(value)  # validate; the string grammar is already canonical
         return value
-    if isinstance(value, datetime.timedelta):
+    if isinstance(value, dt.timedelta):
         seconds = value.total_seconds()
     elif isinstance(value, (int, float)):
         seconds = float(value)
@@ -95,16 +95,16 @@ def duration_text(value: Duration) -> str:
     return f'{text}s'
 
 
-def to_naive_utc(value: datetime.datetime) -> datetime.datetime:
+def to_naive_utc(value: dt.datetime) -> dt.datetime:
     """Return ``value`` as a naive (tz-free) UTC datetime."""
     if value.tzinfo is not None:
-        value = value.astimezone(datetime.UTC).replace(tzinfo=None)
+        value = value.astimezone(dt.UTC).replace(tzinfo=None)
     return value
 
 
-def utcnow() -> datetime.datetime:
+def utcnow() -> dt.datetime:
     """Return the current time as a naive UTC datetime."""
-    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+    return dt.datetime.now(dt.UTC).replace(tzinfo=None)
 
 
 __all__ = ['Duration', 'duration_text', 'parse_duration', 'to_naive_utc', 'utcnow']

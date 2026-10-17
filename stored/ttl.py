@@ -20,7 +20,7 @@ from ._time import parse_duration, utcnow
 from .log import get_logger
 
 if TYPE_CHECKING:
-    import datetime
+    import datetime as dt
 
     from .backends.base import StorageBackend
     from .registry import Stream, StreamRegistry
@@ -31,7 +31,7 @@ _log = get_logger('ttl')
 def delete_before_sql(
     table: str,
     column: str,
-    cutoff: datetime.datetime,
+    cutoff: dt.datetime,
     fallback: str | None = None,
 ) -> tuple[str, list[Any]]:
     """The ``DELETE`` that expires ``table``'s rows older than ``cutoff``, and its parameters.

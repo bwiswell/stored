@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import decimal
 
 import pytest
@@ -70,11 +70,11 @@ def test_delete_before_removes_old_rows():
         backend.append_batch(
             't',
             [
-                {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': datetime.datetime(2026, 1, 1)},
-                {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': datetime.datetime(2026, 8, 1)},
+                {'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': dt.datetime(2026, 1, 1)},
+                {'_key_expr': 'k', '_ts_hlc': 'b', '_issued_at': dt.datetime(2026, 8, 1)},
             ],
         )
-        removed = backend.delete_before('t', '_issued_at', datetime.datetime(2026, 6, 1))
+        removed = backend.delete_before('t', '_issued_at', dt.datetime(2026, 6, 1))
         assert removed == 1
         rows = backend.select('SELECT * FROM "t"')
         assert len(rows) == 1
@@ -89,7 +89,7 @@ def test_timestamp_round_trips_as_datetime():
     try:
         cols = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_issued_at': 'TIMESTAMP'}
         backend.ensure_table('t', cols, ('_key_expr', '_ts_hlc'))
-        stamp = datetime.datetime(2026, 8, 27, 13, 45, 6, 123456)
+        stamp = dt.datetime(2026, 8, 27, 13, 45, 6, 123456)
         backend.append_batch('t', [{'_key_expr': 'k', '_ts_hlc': 'a', '_issued_at': stamp}])
         got = backend.select('SELECT * FROM "t"')[0]['_issued_at']
         assert got == stamp
@@ -103,8 +103,8 @@ def test_time_ordering_matches_chronology_across_fractional_seconds():
     try:
         cols = {'_key_expr': 'VARCHAR', '_ts_hlc': 'VARCHAR', '_issued_at': 'TIMESTAMP'}
         backend.ensure_table('t', cols, ('_key_expr', '_ts_hlc'))
-        whole = datetime.datetime(2026, 8, 27, 12, 0, 0)  # no fractional part
-        frac = datetime.datetime(2026, 8, 27, 12, 0, 0, 1)  # 1 microsecond later
+        whole = dt.datetime(2026, 8, 27, 12, 0, 0)  # no fractional part
+        frac = dt.datetime(2026, 8, 27, 12, 0, 0, 1)  # 1 microsecond later
         backend.append_batch(
             't',
             [
@@ -132,9 +132,9 @@ def test_upsert_latest_keeps_newest_within_a_batch():
         backend.upsert_latest(
             'latest_t',
             [
-                {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': datetime.datetime(2026, 1, 1)},
-                {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': datetime.datetime(2026, 3, 1)},  # newest
-                {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': datetime.datetime(2026, 2, 1)},  # out of order
+                {'source': 'rtls', 'epc': 'A', 'x': 1.0, '_event_at': dt.datetime(2026, 1, 1)},
+                {'source': 'rtls', 'epc': 'A', 'x': 3.0, '_event_at': dt.datetime(2026, 3, 1)},  # newest
+                {'source': 'rtls', 'epc': 'A', 'x': 2.0, '_event_at': dt.datetime(2026, 2, 1)},  # out of order
             ],
             ('source', 'epc'),
             '_event_at',
@@ -142,7 +142,7 @@ def test_upsert_latest_keeps_newest_within_a_batch():
         rows = backend.select('SELECT * FROM "latest_t"')
         assert len(rows) == 1
         assert rows[0]['x'] == 3.0
-        assert rows[0]['_event_at'] == datetime.datetime(2026, 3, 1)
+        assert rows[0]['_event_at'] == dt.datetime(2026, 3, 1)
     finally:
         backend.close()
 
@@ -154,7 +154,7 @@ def test_upsert_latest_ignores_older_across_calls():
         key, cmp = ('source', 'epc'), '_event_at'
 
         def put(x, month):
-            row = {'source': 's', 'epc': 'A', 'x': x, '_event_at': datetime.datetime(2026, month, 1)}
+            row = {'source': 's', 'epc': 'A', 'x': x, '_event_at': dt.datetime(2026, month, 1)}
             backend.upsert_latest('latest_t', [row], key, cmp)
 
         put(3.0, 3)
@@ -281,7 +281,7 @@ def test_delete_before_falls_back_where_the_column_is_null():
     backend = SQLiteBackend(':memory:')
     try:
         backend.ensure_table('t', {'id': 'BIGINT', '_event_at': 'TIMESTAMP', '_issued_at': 'TIMESTAMP'}, ('id',))
-        old, new = datetime.datetime(2026, 1, 1), datetime.datetime(2026, 3, 1)
+        old, new = dt.datetime(2026, 1, 1), dt.datetime(2026, 3, 1)
         backend.append_batch(
             't',
             [
@@ -291,7 +291,7 @@ def test_delete_before_falls_back_where_the_column_is_null():
                 {'id': 4, '_event_at': new, '_issued_at': old},  # recent by event time
             ],
         )
-        cutoff = datetime.datetime(2026, 2, 1)
+        cutoff = dt.datetime(2026, 2, 1)
         assert backend.delete_before('t', '_event_at', cutoff) == 1  # NULL is older than no cutoff
         assert backend.delete_before('t', '_event_at', cutoff, fallback='_issued_at') == 1
         assert [row['id'] for row in backend.select('SELECT id FROM "t" ORDER BY id')] == [3, 4]
@@ -310,7 +310,7 @@ def test_upsert_latest_replaces_a_stored_row_with_no_compare_value(run_gap_s):
             cols['_run_start'] = 'TIMESTAMP'
         backend.ensure_table('latest_t', cols, ('id',))
         backend.append_batch('latest_t', [{'id': 1, 'x': 1.0, '_event_at': None}])
-        at = datetime.datetime(2026, 3, 1)
+        at = dt.datetime(2026, 3, 1)
         row = {'id': 1, 'x': 2.0, '_event_at': at}
         backend.upsert_latest('latest_t', [row], ('id',), '_event_at', run_gap_s=run_gap_s)
 

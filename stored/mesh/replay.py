@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
+import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 import zeared as z
@@ -60,10 +60,10 @@ def _event_seconds(value: Any) -> float | None:
     """Read a ``time_field`` value as unix seconds, or ``None`` when it has no time."""
     if value is None:
         return None
-    if isinstance(value, datetime.datetime):
-        return value.replace(tzinfo=value.tzinfo or datetime.UTC).timestamp()
-    if isinstance(value, datetime.date):
-        return datetime.datetime(value.year, value.month, value.day, tzinfo=datetime.UTC).timestamp()
+    if isinstance(value, dt.datetime):
+        return value.replace(tzinfo=value.tzinfo or dt.UTC).timestamp()
+    if isinstance(value, dt.date):
+        return dt.datetime(value.year, value.month, value.day, tzinfo=dt.UTC).timestamp()
     return float(value)
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
+import datetime as dt
 
 import pytest
 import zeared
@@ -1078,7 +1078,7 @@ class Sighting(zeared.Message):
 
 
 def to_sighting(row: Position, _request: object, meta: stored.LatestMeta) -> Sighting:
-    since = meta.run_start.replace(tzinfo=datetime.UTC).timestamp() if meta.run_start else 0.0
+    since = meta.run_start.replace(tzinfo=dt.UTC).timestamp() if meta.run_start else 0.0
     return Sighting(source=row.source, epc=row.epc, x=row.x, since=since)
 
 

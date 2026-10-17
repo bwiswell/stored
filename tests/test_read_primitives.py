@@ -8,7 +8,7 @@ mesh — just the primitives plus a small consumer-owned mapping function, exact
 shape `rio-location-store` will use for `LastKnownLocation` / `LocationHistoryQuery`.
 """
 
-import datetime
+import datetime as dt
 
 import seared as s
 
@@ -72,7 +72,7 @@ def _store(tmp_path) -> Store:
 def test_last_known_served_from_latest_projection(tmp_path):
     store = _store(tmp_path)
     try:
-        now = datetime.datetime.now(datetime.UTC).timestamp()
+        now = dt.datetime.now(dt.UTC).timestamp()
         store.record(Ping, Ping(source='rtls', epc='A', x=1.0, y=1.0, observed_at=now - 100))
         store.record(Ping, Ping(source='rtls', epc='A', x=2.0, y=2.0, observed_at=now))  # newest
         store.record(Ping, Ping(source='rtls', epc='A', x=9.0, y=9.0, observed_at=now - 50))  # older
@@ -91,7 +91,7 @@ def test_last_known_served_from_latest_projection(tmp_path):
 def test_time_range_served_from_history_with_unix_bounds(tmp_path):
     store = _store(tmp_path)
     try:
-        now = datetime.datetime.now(datetime.UTC).timestamp()
+        now = dt.datetime.now(dt.UTC).timestamp()
         store.record(Ping, Ping(source='rtls', epc='A', observed_at=now - 7200))  # 2h ago (out of range)
         store.record(Ping, Ping(source='rtls', epc='A', observed_at=now - 1800))  # 30m ago
         store.record(Ping, Ping(source='rtls', epc='A', observed_at=now - 60))  # 1m ago
