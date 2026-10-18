@@ -8,6 +8,24 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.2 — unreleased
+
+**Config that refuses its typos.**
+
+### Changed
+
+- **Breaking:** a key the config doesn't declare is refused, anywhere in the file. `StoredConfig`, `StreamSpec` and
+  `LatestSpec` are declared `unknown='raise'`, so `load`, `loads` and the `from_*` readers raise one
+  `ValidationError` naming every unknown key, `[[streams]]` and their `latest` tables included, where a misspelt key
+  was dropped and its setting kept its default. `validate-config` and `run` both refuse such a file. A `[zenoh]`
+  typo is refused by zeared 0.4.2's `SessionConfig`, where the table is loaded. `from_env` reads only the variables
+  it knows.
+- **Dependencies:** seared `>=0.4.2,<0.5` and zeared `>=0.4.2,<0.5`, pinned to `tag = "v0.4.2"` each, and the
+  lockfile moves from seared 0.4.0 and zeared 0.4.1. seared brings `unknown=` and `field_kind`; zeared a
+  `SessionConfig` that refuses unknown keys, `zeared.keyexpr`, and retention that answers `$*` queries. On these
+  releases `typing.get_type_hints()` fails on any seared class (a seared issue); stored never calls it. See their
+  changelogs.
+
 ## 0.4.1 — 2026-10-17
 
 **The daemon's health, as systemd sees it, and config it can check.** The daemon pings a systemd watchdog while its

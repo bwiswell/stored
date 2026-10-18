@@ -76,6 +76,23 @@ time_field = "observed_at"   # prune/range by domain event time, not mesh delive
   retention = "30d"          # outlives the 48h history
 ```
 
+### Unknown keys are refused (0.4.2)
+
+A key the config doesn't declare, anywhere in the file, is refused:
+`StoredConfig`, `StreamSpec` and `LatestSpec` are declared
+`unknown='raise'`. One `ValidationError` names every unknown key,
+`[[streams]]` and their `latest` tables included:
+
+```text
+StoredConfig.retension: unknown key (2 more: streams[0].retension, streams[0].latest.kye)
+```
+
+Until 0.4.2 a misspelt key was dropped, and its setting quietly kept its
+default. `validate-config` and `run` both refuse such a file, and the
+environment can't carry one: `from_env` reads only the variables it knows.
+The `[zenoh]` table's keys are checked where it's loaded, by zeared's
+`SessionConfig` (below).
+
 Load precedence: `stored -c <file>` reads the TOML; otherwise config comes from
 the environment. The two don't layer: with `-c`, no `STORED_*` variable is read.
 The session's connection follows the same rule on its own: a `[zenoh]` table, when
@@ -104,6 +121,7 @@ session opened with `zeared.open`, timestamping on. With no table, each key but
 
 `auto_reconnect`, `probe_interval`, `resync_jitter` and `resync_concurrency` are new
 in zeared 0.4. `validate-config` loads the table as `run` does (0.4.1), so a
-missing `mode` or a wrong value fails it. A key the table doesn't know is still
-dropped without a word, though, so check a key against this list (or zeared's
-`SessionConfig`) when it seems to do nothing.
+missing `mode` or a wrong value fails it, and since 0.4.2 so does a key the
+table doesn't know: zeared 0.4.2's `SessionConfig` refuses it, naming every
+one (`SessionConfig.auto_reconect: unknown key`). The `zenoh_overrides`
+paths are Zenoh's, and aren't checked.

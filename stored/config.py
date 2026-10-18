@@ -28,7 +28,7 @@ def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(',') if item.strip()]
 
 
-@s.seared
+@s.seared(unknown='raise')
 class LatestSpec(s.Seared):
     """A stream's latest-per-key projection (durable last-known state).
 
@@ -46,7 +46,7 @@ class LatestSpec(s.Seared):
     # fmt: on
 
 
-@s.seared
+@s.seared(unknown='raise')
 class StreamSpec(s.Seared):
     """One recorded stream: a message class plus its retention policy.
 
@@ -75,9 +75,16 @@ class StreamSpec(s.Seared):
     # fmt: on
 
 
-@s.seared
+@s.seared(unknown='raise')
 class StoredConfig(s.Seared):
     """Top-level configuration for a ``stored`` store or chronicler daemon.
+
+    A key it doesn't declare is refused (0.4.2), anywhere in the file:
+    ``load``, ``loads`` and the ``from_*`` readers raise one ``ValidationError``
+    naming every unknown key, ``[[streams]]`` and their ``latest`` tables
+    included. ``StreamSpec`` and ``LatestSpec`` refuse them when loaded alone.
+    The ``zenoh`` table's keys are checked where it's loaded, by zeared's
+    ``SessionConfig``.
 
     Attributes:
         db_path: Path to the backing database file.
