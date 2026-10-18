@@ -8,9 +8,11 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
-## 0.4.2 — unreleased
+## 0.4.2 — 2026-10-17
 
-**Config that refuses its typos.**
+**Config that refuses its typos, and streams checked before `run`.** On seared and zeared 0.4.2, a key the config
+doesn't declare is refused anywhere in the file, `validate-config` registers every stream as `run` would, and a
+subclass of a field is stored as its base is.
 
 ### Added
 

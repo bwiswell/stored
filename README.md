@@ -36,21 +36,21 @@ sister that remembers.
 ## Install
 
 Each release is tagged `v<version>` on GitHub (the first is `v0.3.5`; the latest is
-`v0.4.1`). Install one by its tag:
+`v0.4.2`). Install one by its tag:
 
 ```sh
 # persist/query seared objects + the Zenoh chronicler (stdlib sqlite3 backend)
-uv add git+https://github.com/bwiswell/stored --tag v0.4.1
+uv add git+https://github.com/bwiswell/stored --tag v0.4.2
 
 # with the DuckDB backend (analytics upgrade)
-uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.4.1"
+uv add "stored[duckdb] @ git+https://github.com/bwiswell/stored@v0.4.2"
 ```
 
 `uv add` records the tag as the dependency's source:
 
 ```toml
 [tool.uv.sources]
-stored = { git = "https://github.com/bwiswell/stored", tag = "v0.4.1" }
+stored = { git = "https://github.com/bwiswell/stored", tag = "v0.4.2" }
 ```
 
 **The tag is the pin.** uv doesn't check a version specifier such as
@@ -71,10 +71,11 @@ is in [`CHANGELOG.md`](CHANGELOG.md).
 fixes how rows with no event time are kept. What changes for code and deployments
 written against 0.3.x, and what to do:
 
-**1. Pins.** Move the three together: `stored` to `tag = "v0.4.0"`, `seared` to
-`tag = "v0.4.0"` and `zeared` to `tag = "v0.4.1"`. `stored` pins its siblings by tag,
-and uv refuses two different URLs for one package, so a project that names either
-needs the same tag.
+**1. Pins.** Move the three together: `stored` to a 0.4 tag (`v0.4.2` is the
+latest), and `seared` and `zeared` to the tags it pins, `v0.4.2` each (stored 0.4.0
+and 0.4.1 pinned seared `v0.4.0` and zeared `v0.4.1`). `stored` pins its siblings by
+tag, and uv refuses two different URLs for one package, so a project that names
+either needs the same tag.
 
 **2. Decoding is seared 0.4.0's.** A sample seared now refuses — a `null` in a
 required field, a fractional number into an `Int`, a `2` into a `Bool` — goes to the

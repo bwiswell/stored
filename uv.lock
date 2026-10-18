@@ -253,7 +253,7 @@ source = { git = "https://github.com/bwiswell/seared?tag=v0.4.2#e7553a51aef955bb
 
 [[package]]
 name = "stored"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "seared" },
