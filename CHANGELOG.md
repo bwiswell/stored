@@ -8,6 +8,23 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.3 — 2026-10-17
+
+**On seared and zeared 0.4.3, where type hints resolve again.**
+
+### Changed
+
+- **Dependencies:** seared `>=0.4.3,<0.5` and zeared `>=0.4.3,<0.5`, pinned to `tag = "v0.4.3"` each. seared 0.4.3
+  imports at runtime the types its base's and its fields' annotations name, so `typing.get_type_hints()` works on
+  seared classes again, stored's config classes included; zeared 0.4.3 takes it. Nothing that loads, dumps or
+  records changes. See their changelogs.
+
+### Fixed
+
+- **`typing.get_type_hints()` works on `LatestMeta`.** Its `run_start` annotation names the `datetime` module,
+  imported only for type checking, so `get_type_hints` raised `NameError` on it. Every class stored exports is now
+  checked. Since 0.3.3.
+
 ## 0.4.2 — 2026-10-17
 
 **Config that refuses its typos, and streams checked before `run`.** On seared and zeared 0.4.2, a key the config
