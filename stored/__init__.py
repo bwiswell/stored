@@ -31,7 +31,7 @@ from .store import Store
 if TYPE_CHECKING:
     from .zenoh import Chronicler
 
-__version__ = '0.4.2'
+__version__ = '0.4.3'
 
 __all__ = [
     'BackendError',
