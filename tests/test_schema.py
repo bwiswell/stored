@@ -89,3 +89,39 @@ def test_json_index_specs_slugs_anything_unsafe():
 
 def test_json_index_specs_is_empty_without_declarations():
     assert schema.json_index_specs('t', {}) == ()
+
+
+class TestByKind:
+    """0.4.2: column types key on ``seared.field_kind``, so a subclass keeps its base's column."""
+
+    def test_a_str_subclass_gets_a_column(self):
+        # Keyed on the class's name until 0.4.2, it got none, and lived only
+        # in `_payload`, where it couldn't be indexed or queried on.
+        class Trimmed(s.Str):
+            pass
+
+        @s.seared
+        class Tagged(s.Seared):
+            label: str = Trimmed(required=True)
+            n: int = s.Int(default=0)
+
+        columns = schema.derive_columns(Tagged)
+        assert (columns['label'], columns['n']) == ('VARCHAR', 'BIGINT')
+
+    def test_a_field_with_no_kind_goes_to_the_payload(self):
+        import dataclasses
+
+        @dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
+        class Raw(s.Field):
+            def serialize(self, value, validate=True, **kwargs):  # noqa: FBT002 — seared's Field signature
+                return value
+
+            def deserialize(self, value, validate=True, **kwargs):  # noqa: FBT002 — seared's Field signature
+                return value
+
+        assert schema.column_type(Raw()) is None
+
+    def test_the_tables_are_keyed_by_kind(self):
+        assert schema.SCALAR_TYPES[s.FieldKind.STR] == 'VARCHAR'
+        assert s.FieldKind.NESTED in schema.COMPLEX_FIELDS
+        assert s.FieldKind.DATETIME in schema.TIME_FIELD_KINDS

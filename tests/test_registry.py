@@ -128,6 +128,42 @@ def test_json_index_rejects_a_non_dict_head():
         StreamRegistry().add(Zoned, json_index=('label.key',))
 
 
+class TestByKind:
+    """0.4.2: the time-axis and JSON-index checks go by ``seared.field_kind``."""
+
+    def test_a_subclass_of_a_temporal_field_can_be_the_time_field(self):
+        class Stamp(s.DateTime):
+            pass
+
+        @s.seared
+        class Stamped(s.Seared):
+            at: dt.datetime = Stamp(required=True)
+
+        StreamRegistry().add(Stamped, time_field='at')
+
+    def test_a_subclass_of_dict_takes_a_json_index(self):
+        class Labels(s.Dict):
+            pass
+
+        @s.seared
+        class Labelled(s.Seared):
+            labels: dict = Labels(default_factory=dict)
+
+        StreamRegistry().add(Labelled, json_index=('labels.site',))
+
+    def test_a_refusal_names_the_class_used(self):
+        class Name(s.Str):
+            pass
+
+        @s.seared
+        class Named(s.Seared):
+            when: str = Name(required=True)
+
+        refusal = r"is a Name field; expected one of \['Date', 'DateTime', 'Float', 'Int'\]"
+        with pytest.raises(RegistrationError, match=refusal):
+            StreamRegistry().add(Named, time_field='when')
+
+
 def test_json_index_rejects_the_bare_dict():
     with pytest.raises(RegistrationError, match='names the whole'):
         StreamRegistry().add(Zoned, json_index=('zones',))
