@@ -60,6 +60,18 @@ def test_validate_config_refuses_a_zenoh_table_without_a_mode(tmp_path):
         _validate(tmp_path, 'identity = "x"\n[zenoh]\nrouter = "tcp/hub:7447"\n')
 
 
+def test_validate_config_refuses_a_misspelt_key(tmp_path):
+    # 0.4.2: the config classes refuse unknown keys, so `run` would refuse it too.
+    with pytest.raises(s.ValidationError, match=r'StoredConfig\.prune_intervl: unknown key'):
+        _validate(tmp_path, 'identity = "x"\nprune_intervl = 60\n')
+
+
+def test_validate_config_refuses_a_misspelt_zenoh_key(tmp_path):
+    # Through zeared 0.4.2's strict SessionConfig, which loads the table.
+    with pytest.raises(s.ValidationError, match=r'SessionConfig\.auto_reconect: unknown key'):
+        _validate(tmp_path, 'identity = "x"\n[zenoh]\nmode = "peer"\nauto_reconect = true\n')
+
+
 def test_validate_config_leaves_the_environment_unchecked(tmp_path, monkeypatch, capsys):
     # With no table, `run` reads ZEARED_SESSION_*. validate-config imports no
     # transport then, so it doesn't check them; the summary says where they're from.
