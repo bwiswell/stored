@@ -19,13 +19,15 @@ is one more column in the same statement, computed against the row it replaces.
 
 from __future__ import annotations
 
+# At runtime, not under ``TYPE_CHECKING``: ``LatestMeta.run_start``'s
+# annotation names it, and ``typing.get_type_hints`` evaluates that (0.4.3).
+import datetime as dt  # noqa: TC003
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from . import schema
 
 if TYPE_CHECKING:
-    import datetime as dt
     from collections.abc import Sequence
 
     from .dialect import Dialect
