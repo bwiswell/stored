@@ -16,32 +16,44 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from seared import FieldKind, field_kind
+
 from .errors import SchemaError
 
 if TYPE_CHECKING:
     import seared as s
 
 # Backend-neutral column type names (DuckDB spelling; the backend may remap).
-# Scalar seared field class name -> column type.
-SCALAR_TYPES: dict[str, str] = {
-    'Int': 'BIGINT',
-    'Float': 'DOUBLE',
-    'Bool': 'BOOLEAN',
-    'Str': 'VARCHAR',
-    'Path': 'VARCHAR',
-    'UUID': 'VARCHAR',
-    'Enum': 'VARCHAR',
-    'Bytes': 'BLOB',
-    'DateTime': 'TIMESTAMP',
-    'Date': 'DATE',
-    'Time': 'TIME',
-    'TimeDelta': 'INTERVAL',
-    'Decimal': 'DECIMAL(38, 9)',
+# Scalar seared field kind -> column type. Keyed on ``seared.field_kind``
+# (0.4.2), so a subclass of a field keeps its base's column; keyed on the
+# class's name until then, a subclass of ``Str`` got no column at all.
+SCALAR_TYPES: dict[FieldKind, str] = {
+    FieldKind.INT: 'BIGINT',
+    FieldKind.FLOAT: 'DOUBLE',
+    FieldKind.BOOL: 'BOOLEAN',
+    FieldKind.STR: 'VARCHAR',
+    FieldKind.PATH: 'VARCHAR',
+    FieldKind.UUID: 'VARCHAR',
+    FieldKind.ENUM: 'VARCHAR',
+    FieldKind.BYTES: 'BLOB',
+    FieldKind.DATETIME: 'TIMESTAMP',
+    FieldKind.DATE: 'DATE',
+    FieldKind.TIME: 'TIME',
+    FieldKind.TIMEDELTA: 'INTERVAL',
+    FieldKind.DECIMAL: 'DECIMAL(38, 9)',
 }
 
 # Field kinds that never map to a scalar column — serialized into ``_payload``.
-COMPLEX_FIELDS: frozenset[str] = frozenset(
-    {'T', 'Union', 'Dict', 'Tuple', 'NDArray', 'PandasFrame', 'PolarsFrame'},
+COMPLEX_FIELDS: frozenset[FieldKind] = frozenset(
+    {
+        FieldKind.NESTED,
+        FieldKind.UNION,
+        FieldKind.DICT,
+        FieldKind.TUPLE,
+        FieldKind.NDARRAY,
+        FieldKind.PANDAS,
+        FieldKind.POLARS,
+    },
 )
 
 # Metadata columns prepended to every stream table. Ordered; the first two form
@@ -158,7 +170,9 @@ EVENT_AT: str = '_event_at'
 RUN_START: str = '_run_start'
 
 #: Seared field kinds a ``time_field`` may name — an absolute instant only.
-TIME_FIELD_KINDS: frozenset[str] = frozenset({'Int', 'Float', 'DateTime', 'Date'})
+TIME_FIELD_KINDS: frozenset[FieldKind] = frozenset(
+    {FieldKind.INT, FieldKind.FLOAT, FieldKind.DATETIME, FieldKind.DATE},
+)
 
 
 def column_type(field: Any) -> str | None:
@@ -175,8 +189,8 @@ def column_type(field: Any) -> str | None:
     """
     if getattr(field, 'many', False) or getattr(field, 'keyed', False):
         return None
-    kind = type(field).__name__
-    if kind in COMPLEX_FIELDS:
+    kind = field_kind(field)
+    if kind is None or kind in COMPLEX_FIELDS:
         return None
     return SCALAR_TYPES.get(kind)
 

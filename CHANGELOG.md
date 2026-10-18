@@ -31,11 +31,20 @@ lines as it lands, and the entry is dated when that version is released.
   `latest` key or index naming no field, a duplicate stream, or an unknown backend now fails it, where each passed
   and then failed `run`. Nothing is written to disk. A config of plain seared classes, which `migrate` and `prune`
   still accept, fails it too.
+- **Breaking:** `schema.SCALAR_TYPES`, `COMPLEX_FIELDS` and `TIME_FIELD_KINDS` are keyed on `seared.FieldKind`
+  (`FieldKind.INT`, whose value is `'int'`), where they were keyed on field class names (`'Int'`).
 - **Dependencies:** seared `>=0.4.2,<0.5` and zeared `>=0.4.2,<0.5`, pinned to `tag = "v0.4.2"` each, and the
   lockfile moves from seared 0.4.0 and zeared 0.4.1. seared brings `unknown=` and `field_kind`; zeared a
   `SessionConfig` that refuses unknown keys, `zeared.keyexpr`, and retention that answers `$*` queries. On these
   releases `typing.get_type_hints()` fails on any seared class (a seared issue); stored never calls it. See their
   changelogs.
+
+### Fixed
+
+- **A subclass of a field is stored as its base is.** Columns, the time axis and JSON indexes go by
+  `seared.field_kind` rather than the field class's name: a subclass of `Str` gets its `VARCHAR` column, where it
+  lived only in `_payload` and couldn't be indexed or queried on; a subclass of `Int`, `Float`, `DateTime` or `Date`
+  can be a `time_field`; and a subclass of `Dict` takes a `json_index`. Since 0.1.0.
 
 ## 0.4.1 — 2026-10-17
 

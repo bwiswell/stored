@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import seared as s
+from seared import FieldKind, field_kind
 
 from . import schema
 from ._time import Duration, duration_text, parse_duration
@@ -91,11 +92,11 @@ def _validate_time_field(cls: type[s.Seared], time_field: str) -> None:
     """
     for attr, _wire, fld in cls.__seared_fields__:
         if attr == time_field:
-            kind = type(fld).__name__
-            if kind not in schema.TIME_FIELD_KINDS:
+            # By kind (0.4.2), so a subclass of ``Int`` or ``DateTime`` qualifies.
+            if field_kind(fld) not in schema.TIME_FIELD_KINDS:
                 msg = (
-                    f'time_field {time_field!r} of {cls.__name__} is a {kind} field; '
-                    f'expected one of {sorted(schema.TIME_FIELD_KINDS)}'
+                    f'time_field {time_field!r} of {cls.__name__} is a {type(fld).__name__} field; '
+                    "expected one of ['Date', 'DateTime', 'Float', 'Int']"
                 )
                 raise RegistrationError(
                     msg,
@@ -137,16 +138,17 @@ def _validate_json_index(cls: type[s.Seared], json_index: tuple[str, ...]) -> di
         RegistrationError: If a path's head is not a ``Dict`` field of ``cls``, or
             the path names only that field rather than something inside it.
     """
-    kinds = {attr: type(fld).__name__ for attr, _wire, fld in cls.__seared_fields__}
+    fields = {attr: fld for attr, _wire, fld in cls.__seared_fields__}
     paths: dict[str, str] = {}
     for path in json_index:
         head, _, tail = path.partition('.')
-        if head not in kinds:
+        if head not in fields:
             msg = f'json_index {path!r}: {head!r} is not a field of {cls.__name__}'
             raise RegistrationError(msg)
-        if kinds[head] != 'Dict':
+        # By kind (0.4.2), so a subclass of ``Dict`` takes an index too.
+        if field_kind(fields[head]) is not FieldKind.DICT:
             msg = (
-                f'json_index {path!r}: {head!r} is a {kinds[head]} field of {cls.__name__}; '
+                f'json_index {path!r}: {head!r} is a {type(fields[head]).__name__} field of {cls.__name__}; '
                 'a path may only reach into a Dict'
             )
             raise RegistrationError(
