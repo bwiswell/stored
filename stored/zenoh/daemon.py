@@ -10,7 +10,6 @@ withdraws the token, flushes, releases the session, and closes the store.
 from __future__ import annotations
 
 import contextlib
-import importlib
 import os
 import signal
 import socket
@@ -20,40 +19,17 @@ from typing import TYPE_CHECKING, Any
 import zeared as z
 
 from ..config import check_identity
-from ..errors import ConfigError
 from ..log import configure, get_logger
 from ..store import Store
-from ..streams import register_stream
+from ..streams import register_stream, resolve_message_class
 from .chronicler import Chronicler
 from .presence import ChroniclerPresence
 from .session import open_session
 
 if TYPE_CHECKING:
-    from ..config import StoredConfig, StreamSpec
+    from ..config import StoredConfig
 
 _log = get_logger('zenoh.daemon')
-
-
-def _resolve(spec: StreamSpec) -> type[z.Message]:
-    """Resolve a ``'module:ClassName'`` stream spec to its zeared Message class.
-
-    Raises:
-        ConfigError: If the path is malformed, unimportable, or not a Message.
-    """
-    module_path, sep, cls_name = spec.cls.partition(':')
-    if not sep or not module_path or not cls_name:
-        msg = f"stream cls {spec.cls!r} must be 'module:ClassName'"
-        raise ConfigError(msg)
-    try:
-        module = importlib.import_module(module_path)
-        obj = getattr(module, cls_name)
-    except (ImportError, AttributeError) as exc:
-        msg = f'cannot import stream class {spec.cls!r}: {exc}'
-        raise ConfigError(msg) from exc
-    if not (isinstance(obj, type) and issubclass(obj, z.Message)):
-        msg = f'stream cls {spec.cls!r} is not a zeared Message class'
-        raise ConfigError(msg)
-    return obj
 
 
 def _sd_notify(state: str) -> None:
@@ -166,7 +142,7 @@ class Daemon:
 
         chronicler = Chronicler(store, session)
         for spec in cfg.streams:
-            cls = _resolve(spec)
+            cls = resolve_message_class(spec)
             # The whole spec, as `migrate` and `prune` register it. The chronicler
             # registers a class itself only when it finds it unregistered, and
             # then with retention and indexes alone.

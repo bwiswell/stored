@@ -31,11 +31,13 @@ def _load_config(path: str | None) -> StoredConfig:
 def _cmd_validate_config(args: argparse.Namespace) -> int:
     """Load and check the configuration, and summarize it.
 
-    Beyond the load, it checks what ``run`` would refuse at start (0.4.1): the
-    identity, and a ``[zenoh]`` table's values, loaded as ``run`` loads them.
-    With no table, ``run`` reads the session from ``ZEARED_SESSION_*``, which
-    this leaves unchecked: the summary says ``zenoh=env``, and nothing imports
-    zeared.
+    Beyond the load, it checks what ``run`` would refuse at start: the
+    identity, and a ``[zenoh]`` table's values, loaded as ``run`` loads them
+    (0.4.1); and the backend and every stream, registered as ``run``
+    registers them (0.4.2). With no table, ``run`` reads the session from
+    ``ZEARED_SESSION_*``, which this leaves unchecked: the summary says
+    ``zenoh=env``. It imports only what the config names: zeared for a table
+    or a stream, each stream's module, and the backend.
     """
     cfg = _load_config(args.config)
     check_identity(cfg.identity)
@@ -43,11 +45,36 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
         from .zenoh.session import session_config  # lazy: only a table needs the transport
 
         session_config(cfg.zenoh)
+    _check_streams(cfg)
     print(  # noqa: T201 - CLI user-facing output
         f'ok: identity={cfg.identity!r} backend={cfg.backend!r} db_path={cfg.db_path!r} streams={len(cfg.streams)} '
         f'zenoh={"table" if cfg.zenoh else "env"}',
     )
     return 0
+
+
+def _check_streams(cfg: StoredConfig) -> None:
+    """Register every stream into an in-memory store of the configured backend, as ``run`` would (0.4.2).
+
+    Each class resolves as a zeared Message, which imports its module; each
+    registration meets every check ``run``'s does (a duration, a ``time_field``,
+    a ``latest`` key, an index, a duplicate), and the store's construction
+    refuses an unknown backend. Nothing is written to disk.
+
+    Raises:
+        ConfigError: A stream class that won't resolve, a bad duration, or an
+            unknown backend.
+        RegistrationError: A registration ``run`` would refuse.
+    """
+    from .store import Store
+    from .streams import register_stream, resolve_message_class
+
+    store = Store(':memory:', backend=cfg.backend)
+    try:
+        for spec in cfg.streams:
+            register_stream(store, spec, resolve_message_class(spec))
+    finally:
+        store.close()
 
 
 def _cmd_run(args: argparse.Namespace) -> int:

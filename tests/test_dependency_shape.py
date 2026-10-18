@@ -41,6 +41,17 @@ def test_validate_config_with_a_zenoh_table_loads_it_with_zeared(tmp_path):
     subprocess.run([sys.executable, '-c', code], check=True)
 
 
+def test_the_stream_resolvers_stay_transport_free():
+    # `migrate` and `prune` resolve through stored.streams; its Message check
+    # (0.4.2) imports zeared only when it runs, for a chronicler's streams.
+    code = (
+        'import stored.streams, sys; '
+        "assert 'zeared' not in sys.modules, 'stored.streams pulled zeared'; "
+        "assert 'zenoh' not in sys.modules, 'stored.streams pulled zenoh'"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
+
+
 def test_bare_import_does_not_pull_duckdb():
     # DuckDB stays an optional extra with a lazy backend import — merely importing
     # stored (or selecting the default SQLite backend) must not load it, even when

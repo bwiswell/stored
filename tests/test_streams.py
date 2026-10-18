@@ -12,7 +12,7 @@ import pytest
 from stored import Store, StoredConfig
 from stored.config import StreamSpec
 from stored.errors import ConfigError
-from stored.streams import register_stream, register_streams, resolve_stream_class
+from stored.streams import register_stream, register_streams, resolve_message_class, resolve_stream_class
 
 
 def test_resolve_ok_for_plain_seared_class():
@@ -33,6 +33,25 @@ def test_resolve_rejects_non_seared():
 def test_resolve_rejects_missing_module():
     with pytest.raises(ConfigError):
         resolve_stream_class(StreamSpec.load({'cls': 'no.such.module:Thing'}))
+
+
+class TestResolveMessageClass:
+    """0.4.2: the chronicler's resolver, shared by `run` and `validate-config` (was the daemon's own)."""
+
+    def test_a_message_resolves(self):
+        from _support_messages import Beacon
+
+        assert resolve_message_class(StreamSpec.load({'cls': '_support_messages:Beacon'})) is Beacon
+
+    def test_a_plain_seared_class_is_refused(self):
+        # `migrate` and `prune` take one; the chronicler records only Messages.
+        with pytest.raises(ConfigError, match=r"'stored\.config:StoredConfig' is not a zeared Message class"):
+            resolve_message_class(StreamSpec.load({'cls': 'stored.config:StoredConfig'}))
+
+    @pytest.mark.parametrize('cls', ['no-colon-here', 'no.such.module:Thing'])
+    def test_what_wont_resolve_is_refused_as_before(self, cls):
+        with pytest.raises(ConfigError, match=r'stream cls|cannot import'):
+            resolve_message_class(StreamSpec.load({'cls': cls}))
 
 
 def test_register_streams_creates_table_and_retention(tmp_path):

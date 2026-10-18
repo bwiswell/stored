@@ -12,6 +12,12 @@ lines as it lands, and the entry is dated when that version is released.
 
 **Config that refuses its typos.**
 
+### Added
+
+- **`stored.streams.resolve_message_class(spec)`**, the chronicler's resolver: `resolve_stream_class`, then the
+  check that the class is a zeared Message, with zeared imported only when it runs. `run` and `validate-config`
+  share it, so they refuse a stream in the same words; the daemon's own copy is gone.
+
 ### Changed
 
 - **Breaking:** a key the config doesn't declare is refused, anywhere in the file. `StoredConfig`, `StreamSpec` and
@@ -20,6 +26,11 @@ lines as it lands, and the entry is dated when that version is released.
   was dropped and its setting kept its default. `validate-config` and `run` both refuse such a file. A `[zenoh]`
   typo is refused by zeared 0.4.2's `SessionConfig`, where the table is loaded. `from_env` reads only the variables
   it knows.
+- **Breaking:** `validate-config` registers every stream as `run` would, into an in-memory store of the configured
+  backend. A stream class that won't import or isn't a zeared Message, a duration that won't parse, a `time_field`,
+  `latest` key or index naming no field, a duplicate stream, or an unknown backend now fails it, where each passed
+  and then failed `run`. Nothing is written to disk. A config of plain seared classes, which `migrate` and `prune`
+  still accept, fails it too.
 - **Dependencies:** seared `>=0.4.2,<0.5` and zeared `>=0.4.2,<0.5`, pinned to `tag = "v0.4.2"` each, and the
   lockfile moves from seared 0.4.0 and zeared 0.4.1. seared brings `unknown=` and `field_kind`; zeared a
   `SessionConfig` that refuses unknown keys, `zeared.keyexpr`, and retention that answers `$*` queries. On these
