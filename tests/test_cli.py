@@ -7,7 +7,7 @@ import pytest
 import seared as s
 
 from stored.cli import build_parser, main
-from stored.errors import ConfigError
+from stored.errors import ConfigError, RegistrationError
 
 _UNIT = Path(__file__).parent.parent / 'systemd' / 'stored.service'
 
@@ -60,12 +60,63 @@ def test_validate_config_refuses_a_zenoh_table_without_a_mode(tmp_path):
         _validate(tmp_path, 'identity = "x"\n[zenoh]\nrouter = "tcp/hub:7447"\n')
 
 
+def test_validate_config_refuses_a_misspelt_key(tmp_path):
+    # 0.4.2: the config classes refuse unknown keys, so `run` would refuse it too.
+    with pytest.raises(s.ValidationError, match=r'StoredConfig\.prune_intervl: unknown key'):
+        _validate(tmp_path, 'identity = "x"\nprune_intervl = 60\n')
+
+
+def test_validate_config_refuses_a_misspelt_zenoh_key(tmp_path):
+    # Through zeared 0.4.2's strict SessionConfig, which loads the table.
+    with pytest.raises(s.ValidationError, match=r'SessionConfig\.auto_reconect: unknown key'):
+        _validate(tmp_path, 'identity = "x"\n[zenoh]\nmode = "peer"\nauto_reconect = true\n')
+
+
 def test_validate_config_leaves_the_environment_unchecked(tmp_path, monkeypatch, capsys):
     # With no table, `run` reads ZEARED_SESSION_*. validate-config imports no
     # transport then, so it doesn't check them; the summary says where they're from.
     monkeypatch.setenv('ZEARED_SESSION_MODE', 'bogus')
     assert _validate(tmp_path, 'identity = "x"\n') == 0
     assert 'zenoh=env' in capsys.readouterr().out
+
+
+class TestValidateConfigStreams:
+    """0.4.2: validate-config registers every stream as `run` would, into an in-memory store."""
+
+    @staticmethod
+    def _stream(body):
+        return f'identity = "x"\ndb_path = "never.db"\n[[streams]]\n{body}'
+
+    def test_a_good_stream_passes(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        assert _validate(tmp_path, self._stream('cls = "_support_messages:Sighting"\ntime_field = "at"\n')) == 0
+        assert 'streams=1' in capsys.readouterr().out
+        assert not (tmp_path / 'never.db').exists()  # in memory: nothing written
+
+    @pytest.mark.parametrize(
+        ('body', 'error', 'match'),
+        [
+            ('cls = "_support_messages:Beecon"\n', ConfigError, 'cannot import stream class'),
+            ('cls = "stored.config:StoredConfig"\n', ConfigError, 'is not a zeared Message class'),
+            ('cls = "_support_messages:Beacon"\nretention = "7dd"\n', ConfigError, 'invalid duration'),
+            ('cls = "_support_messages:Beacon"\ntime_field = "seen"\n', RegistrationError, "time_field 'seen' is not"),
+            ('cls = "_support_messages:Beacon"\n[streams.latest]\nkey = ["nope"]\n', RegistrationError, 'nope'),
+        ],
+        ids=['unimportable', 'not-a-message', 'bad-duration', 'no-such-time-field', 'latest-key'],
+    )
+    def test_what_run_would_refuse_it_refuses(self, tmp_path, body, error, match):
+        # Until 0.4.2 each of these passed validate-config and failed `run`.
+        with pytest.raises(error, match=match):
+            _validate(tmp_path, self._stream(body))
+
+    def test_a_duplicate_stream_is_refused(self, tmp_path):
+        twice = 'cls = "_support_messages:Beacon"\n[[streams]]\ncls = "_support_messages:Beacon"\n'
+        with pytest.raises(RegistrationError, match='already registered'):
+            _validate(tmp_path, self._stream(twice))
+
+    def test_an_unknown_backend_is_refused(self, tmp_path):
+        with pytest.raises(ConfigError, match="unknown backend 'postgress'"):
+            _validate(tmp_path, 'identity = "x"\nbackend = "postgress"\n')
 
 
 def test_migrate_creates_tables(tmp_path, capsys):

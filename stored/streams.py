@@ -18,6 +18,8 @@ import seared as s
 from .errors import ConfigError
 
 if TYPE_CHECKING:
+    import zeared as z
+
     from .config import StoredConfig, StreamSpec
     from .store import Store
 
@@ -48,6 +50,32 @@ def resolve_stream_class(spec: StreamSpec) -> type[s.Seared]:
         msg = f'stream cls {spec.cls!r} is not a seared class'
         raise ConfigError(msg)
     return obj
+
+
+def resolve_message_class(spec: StreamSpec) -> type[z.Message]:
+    """Resolve a stream spec to its zeared ``Message`` class, as the chronicler records it (0.4.2).
+
+    :func:`resolve_stream_class`, then the check that the class is a Message:
+    what ``run`` records, and what ``validate-config`` checks. zeared is
+    imported here rather than at module load, so ``import stored.streams``
+    stays transport-free; a class that is a Message has imported it anyway.
+
+    Args:
+        spec: The stream spec whose ``cls`` import path to resolve.
+
+    Returns:
+        The resolved ``@z.zeared`` Message class.
+
+    Raises:
+        ConfigError: If the path is malformed, unimportable, or not a zeared Message.
+    """
+    cls = resolve_stream_class(spec)
+    import zeared as z  # lazy: only a chronicler's streams need the transport
+
+    if not issubclass(cls, z.Message):
+        msg = f'stream cls {spec.cls!r} is not a zeared Message class'
+        raise ConfigError(msg)
+    return cls
 
 
 def register_stream(store: Store, spec: StreamSpec, cls: type[s.Seared]) -> None:
@@ -86,4 +114,4 @@ def register_streams(store: Store, config: StoredConfig) -> None:
         register_stream(store, spec, resolve_stream_class(spec))
 
 
-__all__ = ['register_stream', 'register_streams', 'resolve_stream_class']
+__all__ = ['register_stream', 'register_streams', 'resolve_message_class', 'resolve_stream_class']

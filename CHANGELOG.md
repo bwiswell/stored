@@ -8,6 +8,46 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.2 — 2026-10-17
+
+**Config that refuses its typos, and streams checked before `run`.** On seared and zeared 0.4.2, a key the config
+doesn't declare is refused anywhere in the file, `validate-config` registers every stream as `run` would, and a
+subclass of a field is stored as its base is.
+
+### Added
+
+- **`stored.streams.resolve_message_class(spec)`**, the chronicler's resolver: `resolve_stream_class`, then the
+  check that the class is a zeared Message, with zeared imported only when it runs. `run` and `validate-config`
+  share it, so they refuse a stream in the same words; the daemon's own copy is gone.
+
+### Changed
+
+- **Breaking:** a key the config doesn't declare is refused, anywhere in the file. `StoredConfig`, `StreamSpec` and
+  `LatestSpec` are declared `unknown='raise'`, so `load`, `loads` and the `from_*` readers raise one
+  `ValidationError` naming every unknown key, `[[streams]]` and their `latest` tables included, where a misspelt key
+  was dropped and its setting kept its default. `validate-config` and `run` both refuse such a file. A `[zenoh]`
+  typo is refused by zeared 0.4.2's `SessionConfig`, where the table is loaded. `from_env` reads only the variables
+  it knows.
+- **Breaking:** `validate-config` registers every stream as `run` would, into an in-memory store of the configured
+  backend. A stream class that won't import or isn't a zeared Message, a duration that won't parse, a `time_field`,
+  `latest` key or index naming no field, a duplicate stream, or an unknown backend now fails it, where each passed
+  and then failed `run`. Nothing is written to disk. A config of plain seared classes, which `migrate` and `prune`
+  still accept, fails it too.
+- **Breaking:** `schema.SCALAR_TYPES`, `COMPLEX_FIELDS` and `TIME_FIELD_KINDS` are keyed on `seared.FieldKind`
+  (`FieldKind.INT`, whose value is `'int'`), where they were keyed on field class names (`'Int'`).
+- **Dependencies:** seared `>=0.4.2,<0.5` and zeared `>=0.4.2,<0.5`, pinned to `tag = "v0.4.2"` each, and the
+  lockfile moves from seared 0.4.0 and zeared 0.4.1. seared brings `unknown=` and `field_kind`; zeared a
+  `SessionConfig` that refuses unknown keys, `zeared.keyexpr`, and retention that answers `$*` queries. On these
+  releases `typing.get_type_hints()` fails on any seared class (a seared issue); stored never calls it. See their
+  changelogs.
+
+### Fixed
+
+- **A subclass of a field is stored as its base is.** Columns, the time axis and JSON indexes go by
+  `seared.field_kind` rather than the field class's name: a subclass of `Str` gets its `VARCHAR` column, where it
+  lived only in `_payload` and couldn't be indexed or queried on; a subclass of `Int`, `Float`, `DateTime` or `Date`
+  can be a `time_field`; and a subclass of `Dict` takes a `json_index`. Since 0.1.0.
+
 ## 0.4.1 — 2026-10-17
 
 **The daemon's health, as systemd sees it, and config it can check.** The daemon pings a systemd watchdog while its

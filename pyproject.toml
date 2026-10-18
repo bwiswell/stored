@@ -1,6 +1,6 @@
 [project]
 name = "stored"
-version = "0.4.1"
+version = "0.4.2"
 description = "A zeared-native persistence layer and Zenoh chronicler"
 authors = [
     { name = "Benj Wiswell", email = "benjwiswell@gmail.com" },
@@ -9,14 +9,14 @@ requires-python = ">=3.14,<4.0"
 # The ranges are the seared and zeared this release is tested against. uv doesn't
 # check a range against a git source, so the tags below are what pin them.
 dependencies = [
-    "seared>=0.4.0,<0.5",
+    "seared>=0.4.2,<0.5",
     # zeared is a core dependency: stored is a zeared-native chronicler, and every
     # real consumer is a mesh service that already carries zeared, so hiding it
     # behind an extra only guarded an install nobody made. ``eclipse-zenoh`` /
     # ``msgpack`` arrive transitively. The seared-only *core* still imports no
     # zeared at runtime (the top-level ``Chronicler`` re-export is lazy), so a
     # Store-only ``import stored`` stays transport-free at import time.
-    "zeared>=0.4.1,<0.5",
+    "zeared>=0.4.2,<0.5",
 ]
 
 [project.scripts]
@@ -54,8 +54,8 @@ dev = [
 # and uv refuses two different URLs for one package. To test against an
 # unpushed change, point a source at the sibling checkout locally:
 #   seared = { path = "../seared", editable = true }
-seared = { git = "https://github.com/bwiswell/seared", tag = "v0.4.0" }
-zeared = { git = "https://github.com/bwiswell/zeared", tag = "v0.4.1" }
+seared = { git = "https://github.com/bwiswell/seared", tag = "v0.4.2" }
+zeared = { git = "https://github.com/bwiswell/zeared", tag = "v0.4.2" }
 
 [build-system]
 requires = ["hatchling"]

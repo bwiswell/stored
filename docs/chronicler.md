@@ -95,12 +95,22 @@ stored -c stored.toml migrate           # create/reconcile stream tables
 stored -c stored.toml prune             # force a TTL sweep
 ```
 
-`validate-config` refuses what `run` would refuse at start (0.4.1): an identity
-that isn't one key segment, and a `[zenoh]` table `run` can't open a session
-from (no `mode`, or a wrong value), loaded as `run` loads it. With no table, `run`
-reads the session from `ZEARED_SESSION_*`, which `validate-config` leaves
-unchecked, importing no transport. Its summary ends `zenoh=table` or `zenoh=env`
-to say which:
+`validate-config` refuses what `run` would refuse at start:
+- **The identity** (0.4.1), if it isn't one key segment.
+- **A `[zenoh]` table** (0.4.1) that `run` can't open a session from: no `mode`,
+  a wrong value, or (0.4.2) a key it doesn't know. It's loaded as `run` loads it.
+- **The backend and every stream** (0.4.2): each stream is registered into an
+  in-memory store of the configured backend, as `run` registers it, so a class
+  that won't import or isn't a zeared Message, a duration that won't parse, a
+  `time_field`, `latest` key or index that names no field, a duplicate stream,
+  or an unknown backend fails here. Nothing is written to disk.
+
+It imports only what the config names: zeared for a table or a stream, each
+stream's module, and the backend. A config of plain seared classes, which
+`migrate` and `prune` accept, fails it: the chronicler records only Messages.
+With no table, `run` reads the session from `ZEARED_SESSION_*`, which
+`validate-config` leaves unchecked. Its summary ends `zenoh=table` or
+`zenoh=env` to say which:
 
 ```text
 ok: identity='chronicler-1' backend='sqlite' db_path='chronicle.db' streams=2 zenoh=table

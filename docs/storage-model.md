@@ -74,6 +74,15 @@ field — so the row expires at the next sweep and sorts first.
 `Bytes→BLOB`, `DateTime→TIMESTAMP`, `Date→DATE`, `Time→TIME`,
 `TimeDelta→INTERVAL`, `Decimal→DECIMAL(38,9)`.
 
+A field is mapped by its kind, `seared.field_kind` (0.4.2), not its class's
+name, so a subclass of a field gets its base's column: a subclass of `Str` that
+checks its value is still `VARCHAR`. The same goes for a `time_field` (a
+subclass of `DateTime` is a time axis) and a `json_index` (a subclass of `Dict`
+takes one). Until 0.4.2 a subclass fell out of all three: it lived only in
+`_payload`, and couldn't be indexed, queried on, or used as the time axis. The
+tables (`schema.SCALAR_TYPES`, `COMPLEX_FIELDS`, `TIME_FIELD_KINDS`) are keyed
+on `seared.FieldKind`.
+
 These are the **backend-neutral** (DuckDB-spelled) type names; each backend remaps
 them to its own dialect. The **SQLite backend** (the default) maps them to SQLite
 declared types (`BIGINT→INTEGER`, `DOUBLE→REAL`, `VARCHAR→TEXT`, …) and stores

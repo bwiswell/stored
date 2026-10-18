@@ -11,36 +11,13 @@ import zenoh
 from _support_messages import Beacon, Sighting
 
 from stored import Store, StoredConfig
-from stored.config import StreamSpec
 from stored.errors import ConfigError
 from stored.zenoh import ChroniclerPresence
-from stored.zenoh.daemon import Daemon, _resolve, _sd_notify, _watchdog_interval
+from stored.zenoh.daemon import Daemon, _sd_notify, _watchdog_interval
 
 
 def wait(seconds: float = 0.2):
     time.sleep(seconds)
-
-
-# -- stream resolution ----------------------------------------------------
-
-
-def test_resolve_ok():
-    assert _resolve(StreamSpec.load({'cls': '_support_messages:Beacon'})) is Beacon
-
-
-def test_resolve_rejects_bad_format():
-    with pytest.raises(ConfigError):
-        _resolve(StreamSpec.load({'cls': 'no-colon-here'}))
-
-
-def test_resolve_rejects_non_message():
-    with pytest.raises(ConfigError):
-        _resolve(StreamSpec.load({'cls': 'stored.config:StoredConfig'}))
-
-
-def test_resolve_rejects_missing_module():
-    with pytest.raises(ConfigError):
-        _resolve(StreamSpec.load({'cls': 'no.such.module:Thing'}))
 
 
 # -- sd_notify ------------------------------------------------------------

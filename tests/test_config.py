@@ -42,6 +42,35 @@ def test_check_identity_refuses_what_cannot_be_one_key_segment(identity, reason)
         check_identity(identity)
 
 
+class TestUnknownKeys:
+    """0.4.2: a key no config class declares is refused, anywhere in the file."""
+
+    def test_every_typo_is_named_in_one_error(self):
+        data = {
+            'identity': 'c1',
+            'retension': '7d',
+            'streams': [{'cls': 'm:C', 'retension': '1d', 'latest': {'key': ['id'], 'kye': ['x']}}],
+        }
+        named = r'^StoredConfig\.retension: unknown key \(2 more: streams\[0\]\.retension, streams\[0\]\.latest\.kye\)$'
+        with pytest.raises(s.ValidationError, match=named):
+            StoredConfig.load(data)
+
+    def test_a_section_refuses_them_loaded_alone(self):
+        with pytest.raises(s.ValidationError, match=r'StreamSpec\.clss: unknown key'):
+            StreamSpec.load({'clss': 'm:C'})
+
+    def test_the_zenoh_tables_keys_are_left_to_zeared(self):
+        # A Dict: its keys are data to seared. zeared's SessionConfig checks them
+        # where the table is loaded (`run`, `validate-config`).
+        cfg = StoredConfig.load({'identity': 'c1', 'zenoh': {'mode': 'peer', 'auto_reconect': True}})
+        assert cfg.zenoh == {'mode': 'peer', 'auto_reconect': True}
+
+    def test_from_env_reads_only_the_variables_it_knows(self, monkeypatch):
+        monkeypatch.setenv('STORED_IDENTITY', 'c1')
+        monkeypatch.setenv('STORED_RETENSION', '7d')  # not one of them, so never read
+        assert StoredConfig.from_env().identity == 'c1'
+
+
 def test_from_env(monkeypatch):
     monkeypatch.setenv('STORED_IDENTITY', 'c1')
     monkeypatch.setenv('STORED_BACKEND', 'sqlite')
