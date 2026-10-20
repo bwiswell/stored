@@ -74,6 +74,11 @@ field — so the row expires at the next sweep and sorts first.
 `Bytes→BLOB`, `DateTime→TIMESTAMP`, `Date→DATE`, `Time→TIME`,
 `TimeDelta→INTERVAL`, `Decimal→DECIMAL(38,9)`.
 
+An `Enum` column holds the member's **value**, as text: `'missing'`, and `'1'`
+for an int-valued member (0.4.4; it held the name). That's the wire form the
+payload, a `json_index` path and a topic capture all use. A database written
+by an earlier stored holds names, so start it anew.
+
 A field is mapped by its kind, `seared.field_kind` (0.4.2), not its class's
 name, so a subclass of a field gets its base's column: a subclass of `Str` that
 checks its value is still `VARCHAR`. The same goes for a `time_field` (a
@@ -132,9 +137,10 @@ last = store.latest(Location, source='site-a', item='i-1')   # -> Location | Non
 - **Filters take what you hold** (0.4.4). A column filter, each member of a set, and a
   `latest(**key)` value go through the writer's own conversion before binding: an enum
   member, a `UUID`, a `Path` or an aware `datetime` matches the row written from it, as
-  does the column's own spelling (`str(uuid)`, naive UTC). Before, they were bound as
-  given, and failed to bind or matched nothing. A `where=` path compares the payload's
-  wire form, and is unchanged.
+  does the column's own spelling (an enum's wire value, `str(uuid)`, naive UTC). An
+  enum member's **name** doesn't. Before, they were bound as given, and failed to bind
+  or matched nothing. A `where=` path compares the payload's wire form, and is
+  unchanged.
 - **Runs, optionally (`latest_run_gap`).** Register with a gap (`'7d'`, seconds, or a
   `timedelta`) and the projection also keeps each entity's **run start**: when its current
   run of records began, where a silence longer than the gap starts a new run. It is one more
