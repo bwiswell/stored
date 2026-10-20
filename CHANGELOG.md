@@ -8,6 +8,19 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
+## 0.4.4 — unreleased
+
+**On seared and zeared 0.4.4.**
+
+### Changed
+
+- **Dependencies:** seared `>=0.4.4,<0.5` and zeared `>=0.4.4,<0.5`, pinned to `tag = "v0.4.4"` each. seared 0.4.4
+  adds field constraints (bounds on `Int` and `Float`, lengths and a portable pattern on `Str`), which a recorded
+  class's fields may carry: a sample that fails one fails to decode, so it reaches `on_error` and isn't recorded, as
+  no undecodable sample is. A `Union` tag that isn't a string now fails to decode, fallback or not. Unconstrained
+  `Int`, `Float` and `Str` decode faster on the pure-Python path. zeared 0.4.4's `fetch_retained` changes don't
+  reach stored, which doesn't call it. The pins change nothing stored writes. See their changelogs.
+
 ## 0.4.3 — 2026-10-17
 
 **On seared and zeared 0.4.3, where type hints resolve again.**
