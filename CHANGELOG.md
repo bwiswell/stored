@@ -10,7 +10,8 @@ lines as it lands, and the entry is dated when that version is released.
 
 ## 0.4.4 — unreleased
 
-**On seared and zeared 0.4.4.**
+**On seared and zeared 0.4.4, with filters that match what the writer wrote.** An enum column holds the member's
+value, and a filter or `latest` key given what a caller holds is converted as the column was.
 
 ### Changed
 
@@ -20,6 +21,11 @@ lines as it lands, and the entry is dated when that version is released.
   no undecodable sample is. A `Union` tag that isn't a string now fails to decode, fallback or not. Unconstrained
   `Int`, `Float` and `Str` decode faster on the pure-Python path. zeared 0.4.4's `fetch_retained` changes don't
   reach stored, which doesn't call it. The pins change nothing stored writes. See their changelogs.
+- **Storage change:** an enum column holds the member's value, as text (`'missing'`, and `'1'` for an int-valued
+  member), where it held the name: the wire form that the payload, a `json_index` path and a topic capture use. A
+  database written by an earlier stored holds names, so start it anew; nothing migrates it.
+- **Breaking:** a filter or a `latest` key given an enum member's name (`'MISSING'`) matches nothing. Give the
+  member or its value.
 
 ### Fixed
 
@@ -28,6 +34,10 @@ lines as it lands, and the entry is dated when that version is released.
   `UUID`, a `Path` or an aware `datetime` had been bound as given: a member, a `Path`, and a `UUID` on SQLite failed
   to bind (`BackendError`), and an aware `datetime` matched nothing, since the column holds naive UTC. The columns'
   own spellings still match. `where=` paths, which compare the payload, are unchanged. Since the first release.
+- **A filter given an enum's wire value matches.** The column held names, so `'missing'` matched nothing, and on
+  DuckDB an int-valued member's `1` raised a conversion error; a downstream alert store expanded its filters to both
+  spellings to cope. The column now holds the value, and given the column's field a raw `1` becomes its text, so
+  neither backend compares a number with the text column. Since the first release.
 
 ## 0.4.3 — 2026-10-17
 

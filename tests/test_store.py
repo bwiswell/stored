@@ -1038,3 +1038,54 @@ class TestFiltersTakeWhatACallerHolds:
     def test_a_value_no_row_holds_still_matches_nothing(self, store):
         assert store.query(_Tagged, kind=_Kind.SOLD) == []
         assert store.latest(_Tagged, kind=_Kind.SOLD) is None
+
+
+class _Level(enum.IntEnum):
+    LOW = 1
+    HIGH = 2
+
+
+@s.seared
+class _Graded(s.Seared):
+    kind: _Kind = s.Enum(enum=_Kind, required=True)
+    level: _Level = s.Enum(enum=_Level, default=_Level.LOW)
+    note: str = s.Str(default='')
+
+
+class TestEnumColumnsHoldValues:
+    """An enum column holds the member's value, as text (0.4.4): the wire form, not the name."""
+
+    @pytest.fixture
+    def store(self, tmp_path, backend):
+        store = _open(tmp_path, backend)
+        store.register(_Graded, index=('kind', 'level'), latest_key=('kind',))
+        store.record(_Graded, _Graded(kind=_Kind.MISSING, level=_Level.HIGH, note='first'), key='k')
+        store.flush()
+        yield store
+        store.close()
+
+    def test_the_columns_hold_the_values(self, store):
+        table = store.registry.get(_Graded).table
+        rows = store.backend.select(f'SELECT "kind", "level" FROM "{table}"', [])  # noqa: S608 (a test's own table)
+        assert [(row['kind'], row['level']) for row in rows] == [('missing', '2')]
+
+    @pytest.mark.parametrize(
+        'filters',
+        [{'kind': _Kind.MISSING}, {'kind': 'missing'}, {'level': _Level.HIGH}, {'level': 2}, {'level': '2'}],
+        ids=repr,
+    )
+    def test_the_member_and_its_wire_value_match(self, store, filters):
+        assert len(store.query(_Graded, **filters)) == 1
+
+    def test_the_name_no_longer_matches(self, store):
+        assert store.query(_Graded, kind='MISSING') == []
+        assert store.latest(_Graded, kind='MISSING') is None
+
+    @pytest.mark.parametrize('kind', [_Kind.MISSING, 'missing'], ids=repr)
+    def test_a_latest_key(self, store, kind):
+        assert store.latest(_Graded, kind=kind).note == 'first'
+
+    def test_a_newer_record_updates_the_same_latest_row(self, store):
+        store.record(_Graded, _Graded(kind=_Kind.MISSING, level=_Level.LOW, note='second'), key='k')
+        store.flush()
+        assert [m.note for m in store.query_latest(_Graded)] == ['second']
