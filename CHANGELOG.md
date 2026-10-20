@@ -8,7 +8,7 @@ line means an existing database's tables, columns or indexes change, or need a m
 The top entry, while it reads *unreleased*, collects what has merged for the next version; each change adds its own
 lines as it lands, and the entry is dated when that version is released.
 
-## 0.4.4 — unreleased
+## 0.4.4 — 2026-10-19
 
 **On seared and zeared 0.4.4, with filters that match what the writer wrote.** An enum column holds the member's
 value, and a filter or `latest` key given what a caller holds is converted as the column was.
