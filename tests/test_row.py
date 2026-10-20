@@ -1,5 +1,7 @@
 import datetime as dt
+import enum
 
+import pytest
 import seared as s
 
 from stored.registry import StreamRegistry
@@ -73,3 +75,25 @@ def test_event_at_from_unix_seconds_field():
     instant = dt.datetime(2026, 3, 4, 5, 6, 7, tzinfo=dt.UTC)
     row = build_row(stream, Obs(id=1, observed_at=instant.timestamp()), None)
     assert row['_event_at'] == instant.replace(tzinfo=None)
+
+
+class _Kind(enum.Enum):
+    MISSING = 'missing'
+
+
+class _Level(enum.IntEnum):
+    LOW = 1
+
+
+@s.seared
+class _Tagged(s.Seared):
+    kind: _Kind = s.Enum(enum=_Kind, required=True)
+    level: _Level = s.Enum(enum=_Level, default=_Level.LOW)
+
+
+@pytest.mark.parametrize(('attr', 'column'), [('kind', 'missing'), ('level', '1')])
+def test_an_enum_column_holds_the_members_value_as_text(attr, column):
+    # 0.4.4: the wire form, which a filter given the member or the value reaches. It held the name.
+    stream = StreamRegistry().add(_Tagged, index=('kind', 'level'))
+    row = build_row(stream, _Tagged(kind=_Kind.MISSING), None, key='k')
+    assert row[attr] == column

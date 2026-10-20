@@ -16,6 +16,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Protocol
 
 import seared as s
+from seared import FieldKind, field_kind
 
 from . import schema
 from ._time import to_naive_utc, utcnow
@@ -61,15 +62,27 @@ def _synth_ts(now: dt.datetime) -> str:
     return f'{micros:020d}-{next(_synth_counter):08d}'
 
 
-def _column_value(value: Any) -> Any:
-    """Coerce a native field value into a backend-bindable scalar."""
+def column_value(value: Any, field: Any = None) -> Any:
+    """Coerce a native field value into a backend-bindable scalar: what its column holds.
+
+    The write's conversion, and since 0.4.4 a filter's too (``query.as_column``), so a
+    filter given what a caller holds matches the row written from it.
+
+    An enum column holds the member's **value**, as text (0.4.4; it held the name): the
+    wire form, which the payload, a ``json_index`` path and a topic capture all use, and
+    which a filter given the member or that value both reach. ``field``, when given and
+    an enum's, turns a raw wire value into the same text (``1`` to ``'1'``), so neither
+    backend compares a number with the text column.
+    """
     if value is None:
         return None
     if isinstance(value, dt.datetime):
         return to_naive_utc(value)
     if isinstance(value, enum.Enum):
-        return value.name
+        return str(value.value)
     if isinstance(value, (uuid.UUID, pathlib.PurePath)):
+        return str(value)
+    if field is not None and field_kind(field) is FieldKind.ENUM:
         return str(value)
     return value
 
@@ -147,7 +160,7 @@ def build_row(
     for attr, _wire, field in cls.__seared_fields__:
         if schema.column_type(field) is None:
             continue  # complex/collection field — lives in _payload only
-        row[attr] = _column_value(getattr(msg, attr, None))
+        row[attr] = column_value(getattr(msg, attr, None), field)
     return row
 
 
@@ -168,4 +181,4 @@ def rehydrate[M: s.Seared](cls: type[M], columns: dict[str, Any]) -> M:
     return cls.loads(columns['_payload'])
 
 
-__all__ = ['Meta', 'build_row', 'rehydrate']
+__all__ = ['Meta', 'build_row', 'column_value', 'rehydrate']

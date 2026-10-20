@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from ._time import to_naive_utc, utcnow
 from .dialect import DEFAULT_DIALECT, Dialect
 from .errors import QueryError
+from .row import column_value
 
 if TYPE_CHECKING:
     from .registry import Stream
@@ -164,6 +165,25 @@ def is_members(value: Any) -> bool:
     return isinstance(value, (list, tuple, set, frozenset))
 
 
+def as_column(value: Any, field: Any = None) -> Any:
+    """A filter value as its column holds it: the write's conversion, to one value or each of a set (0.4.4).
+
+    A caller holds an enum member, a ``UUID``, a ``Path`` or an aware ``datetime``, which the
+    writer converts before binding (``row.column_value``). Bound as given, such a filter
+    failed to bind or matched nothing; converted the same way, it matches the row written
+    from it. A value already in its column's form passes through unchanged, and an enum's
+    wire value becomes its column's text, given the column's ``field``.
+    """
+    if is_members(value):
+        return [column_value(member, field) for member in value]
+    return column_value(value, field)
+
+
+def column_field(stream: Stream, name: str) -> Any:
+    """The seared field behind ``stream``'s column ``name``, or ``None``: what ``as_column`` converts by."""
+    return next((field for attr, _wire, field in stream.cls.__seared_fields__ if attr == name), None)
+
+
 def equality_clause(operand: str, value: Any) -> tuple[str, list[Any]]:
     """``operand = ?`` for one value, ``operand IN (?, …)`` for a set of them.
 
@@ -211,7 +231,7 @@ def _equality_clauses(
                 f'{stream.cls.__name__} (indexed: {sorted(stream.index)})'
             )
             raise QueryError(msg)
-        built.append(equality_clause(f'"{name}"', value))
+        built.append(equality_clause(f'"{name}"', as_column(value, column_field(stream, name))))
     for path, value in (where or {}).items():
         wire = stream.json_paths.get(path)
         if wire is None:
@@ -313,6 +333,8 @@ __all__ = [
     'Anchor',
     'TimeBound',
     'Window',
+    'as_column',
+    'column_field',
     'decode_anchor',
     'encode_anchor',
     'equality_clause',

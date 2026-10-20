@@ -1,4 +1,7 @@
 import datetime as dt
+import enum
+import pathlib
+import uuid
 
 import pytest
 import seared as s
@@ -239,3 +242,83 @@ def test_plan_keeps_a_string_a_single_value():
     assert not query.is_members('E1')
     for members in (['E1'], ('E1',), {'E1'}, frozenset()):
         assert query.is_members(members)
+
+
+class _Kind(enum.Enum):
+    MISSING = 'missing'
+
+
+_AWARE = dt.datetime(2026, 10, 19, 12, 0, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+
+
+class TestAsColumn:
+    """A filter value takes the write's conversion (0.4.4), so what a caller holds matches its row.
+
+    An enum column holds the member's value, as text.
+    """
+
+    @pytest.mark.parametrize(
+        ('held', 'column'),
+        [
+            (_Kind.MISSING, 'missing'),
+            (uuid.UUID(int=7), '00000000-0000-0000-0000-000000000007'),
+            (pathlib.Path('a/b'), 'a/b'),
+            (_AWARE, dt.datetime(2026, 10, 19, 16, 0)),
+            ('already-a-column', 'already-a-column'),
+            (5, 5),
+            (None, None),
+        ],
+        ids=repr,
+    )
+    def test_one_value(self, held, column):
+        assert query.as_column(held) == column
+
+    @pytest.mark.parametrize(
+        'members', [[_Kind.MISSING], (_Kind.MISSING,), {_Kind.MISSING}, frozenset({_Kind.MISSING})]
+    )
+    def test_each_member_of_a_set(self, members):
+        assert query.as_column(members) == ['missing']
+
+    def test_a_string_is_one_value(self):
+        assert query.as_column('ab') == 'ab'
+
+    def test_plan_binds_the_converted_value(self):
+        @s.seared
+        class Tagged(s.Seared):
+            kind: _Kind = s.Enum(enum=_Kind, required=True)
+
+        stream = StreamRegistry().add(Tagged, index=('kind',))
+        _, params = query.plan(stream, '', query.parse_window(), {'kind': _Kind.MISSING})
+        assert 'missing' in params
+
+
+class _Level(enum.IntEnum):
+    LOW = 1
+
+
+class TestAsColumnByField:
+    """Given an enum column's field, a raw wire value becomes its text, so no backend compares a number with text."""
+
+    @pytest.mark.parametrize(
+        ('field', 'held', 'column'),
+        [
+            (s.Enum(enum=_Level), _Level.LOW, '1'),
+            (s.Enum(enum=_Level), 1, '1'),
+            (s.Enum(enum=_Level), [1, _Level.LOW], ['1', '1']),
+            (s.Enum(enum=_Kind), 'missing', 'missing'),
+            (s.Int(), 1, 1),
+            (None, 1, 1),
+        ],
+        ids=repr,
+    )
+    def test_by_field(self, field, held, column):
+        assert query.as_column(held, field) == column
+
+    def test_column_field_finds_the_field_behind_a_column(self):
+        @s.seared
+        class Leveled(s.Seared):
+            level: _Level = s.Enum(enum=_Level, required=True)
+
+        stream = StreamRegistry().add(Leveled, index=('level',))
+        assert s.field_kind(query.column_field(stream, 'level')) is s.FieldKind.ENUM
+        assert query.column_field(stream, 'nope') is None
