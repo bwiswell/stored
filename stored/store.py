@@ -18,7 +18,7 @@ from ._time import Duration, duration_text
 from .errors import ConfigError, QueryError
 from .latest import LatestMeta, meta_of
 from .log import get_logger
-from .query import DEFAULT_CHUNK, Anchor, TimeBound, Window, equality_clause, is_members, parse_window, plan
+from .query import DEFAULT_CHUNK, Anchor, TimeBound, Window, as_column, equality_clause, is_members, parse_window, plan
 from .registry import Stream, StreamRegistry
 from .row import Meta, build_row, rehydrate
 from .ttl import Reaper
@@ -763,7 +763,7 @@ class Store:
         clauses: list[str] = []
         params: list[Any] = []
         for col in stream.latest_key:
-            clause, values = equality_clause(f'"{col}"', key[col])
+            clause, values = equality_clause(f'"{col}"', as_column(key[col]))
             clauses.append(clause)
             params.extend(values)
         # One exact key holds one row; a set of them may hold several, and "latest" is the

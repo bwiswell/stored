@@ -129,6 +129,12 @@ last = store.latest(Location, source='site-a', item='i-1')   # -> Location | Non
 - **Filters take sets too.** Any column or path filter on `query` / `query_latest` / `iter`
   accepts a collection and matches any member (`IN`); an empty collection matches
   nothing. A string is always one value.
+- **Filters take what you hold** (0.4.4). A column filter, each member of a set, and a
+  `latest(**key)` value go through the writer's own conversion before binding: an enum
+  member, a `UUID`, a `Path` or an aware `datetime` matches the row written from it, as
+  does the column's own spelling (`str(uuid)`, naive UTC). Before, they were bound as
+  given, and failed to bind or matched nothing. A `where=` path compares the payload's
+  wire form, and is unchanged.
 - **Runs, optionally (`latest_run_gap`).** Register with a gap (`'7d'`, seconds, or a
   `timedelta`) and the projection also keeps each entity's **run start**: when its current
   run of records began, where a silence longer than the gap starts a new run. It is one more

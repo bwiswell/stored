@@ -1,5 +1,8 @@
 import datetime as dt
+import enum
+import pathlib
 import threading
+import uuid
 
 import pytest
 import seared as s
@@ -971,3 +974,67 @@ def test_a_store_whose_writer_stopped_is_not(tmp_path):
         assert store.health(timeout=1.0) == 'the writer has stopped flushing'
     finally:
         store.close()
+
+
+class _Kind(enum.Enum):
+    MISSING = 'missing'
+    SOLD = 'sold'
+
+
+@s.seared
+class _Tagged(s.Seared):
+    kind: _Kind = s.Enum(enum=_Kind, required=True)
+    unit: uuid.UUID = s.UUID(required=True)
+    place: pathlib.Path = s.Path(required=True)
+    at: dt.datetime = s.DateTime(required=True)
+
+
+_UNIT = uuid.UUID(int=7)
+_AT = dt.datetime(2026, 10, 19, 12, 0, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+
+
+class TestFiltersTakeWhatACallerHolds:
+    """A filter or latest key given the field's own value matches the row written from it (0.4.4).
+
+    The writer converts an enum member, a ``UUID``, a ``Path`` and an aware ``datetime`` before
+    binding; a filter given one was bound as given, and failed to bind or matched nothing.
+    """
+
+    @pytest.fixture
+    def store(self, tmp_path, backend):
+        store = _open(tmp_path, backend)
+        store.register(_Tagged, index=('kind', 'unit', 'place', 'at'), latest_key=('kind',))
+        store.record(_Tagged, _Tagged(kind=_Kind.MISSING, unit=_UNIT, place=pathlib.Path('a/b'), at=_AT), key='k')
+        store.flush()
+        yield store
+        store.close()
+
+    @pytest.mark.parametrize(
+        'filters',
+        [
+            {'kind': _Kind.MISSING},
+            {'unit': _UNIT},
+            {'place': pathlib.Path('a/b')},
+            {'at': _AT},
+            {'at': _AT.astimezone(dt.UTC)},
+            {'kind': {_Kind.MISSING, _Kind.SOLD}},
+            {'unit': [_UNIT, uuid.UUID(int=8)]},
+        ],
+        ids=repr,
+    )
+    def test_a_query_filter(self, store, filters):
+        assert len(store.query(_Tagged, **filters)) == 1
+
+    def test_a_latest_projection_filter(self, store):
+        assert len(store.query_latest(_Tagged, unit=_UNIT, at=_AT)) == 1
+
+    @pytest.mark.parametrize('kind', [_Kind.MISSING, [_Kind.MISSING, _Kind.SOLD]], ids=repr)
+    def test_a_latest_key(self, store, kind):
+        assert store.latest(_Tagged, kind=kind) is not None
+
+    def test_the_columns_own_spellings_still_match(self, store):
+        assert len(store.query(_Tagged, unit=str(_UNIT), place='a/b')) == 1
+
+    def test_a_value_no_row_holds_still_matches_nothing(self, store):
+        assert store.query(_Tagged, kind=_Kind.SOLD) == []
+        assert store.latest(_Tagged, kind=_Kind.SOLD) is None

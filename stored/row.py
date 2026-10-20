@@ -61,8 +61,12 @@ def _synth_ts(now: dt.datetime) -> str:
     return f'{micros:020d}-{next(_synth_counter):08d}'
 
 
-def _column_value(value: Any) -> Any:
-    """Coerce a native field value into a backend-bindable scalar."""
+def column_value(value: Any) -> Any:
+    """Coerce a native field value into a backend-bindable scalar: what its column holds.
+
+    The write's conversion, and since 0.4.4 a filter's too (``query.as_column``), so a
+    filter given what a caller holds matches the row written from it.
+    """
     if value is None:
         return None
     if isinstance(value, dt.datetime):
@@ -147,7 +151,7 @@ def build_row(
     for attr, _wire, field in cls.__seared_fields__:
         if schema.column_type(field) is None:
             continue  # complex/collection field — lives in _payload only
-        row[attr] = _column_value(getattr(msg, attr, None))
+        row[attr] = column_value(getattr(msg, attr, None))
     return row
 
 
@@ -168,4 +172,4 @@ def rehydrate[M: s.Seared](cls: type[M], columns: dict[str, Any]) -> M:
     return cls.loads(columns['_payload'])
 
 
-__all__ = ['Meta', 'build_row', 'rehydrate']
+__all__ = ['Meta', 'build_row', 'column_value', 'rehydrate']

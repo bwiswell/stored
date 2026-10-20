@@ -21,6 +21,14 @@ lines as it lands, and the entry is dated when that version is released.
   `Int`, `Float` and `Str` decode faster on the pure-Python path. zeared 0.4.4's `fetch_retained` changes don't
   reach stored, which doesn't call it. The pins change nothing stored writes. See their changelogs.
 
+### Fixed
+
+- **A filter given the field's own value matches its row.** A column filter, each member of a set, and a
+  `latest(**key)` value are converted as the writer converts the column before binding them. An enum member, a
+  `UUID`, a `Path` or an aware `datetime` had been bound as given: a member, a `Path`, and a `UUID` on SQLite failed
+  to bind (`BackendError`), and an aware `datetime` matched nothing, since the column holds naive UTC. The columns'
+  own spellings still match. `where=` paths, which compare the payload, are unchanged. Since the first release.
+
 ## 0.4.3 — 2026-10-17
 
 **On seared and zeared 0.4.3, where type hints resolve again.**
